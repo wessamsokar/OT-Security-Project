@@ -1,14 +1,22 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import require_roles
 from app.db.session import get_db
-from app.models.alert import Alert
+from app.models.alert import Alert, AlertSeverity
 from app.models.incident import Incident, IncidentStatus
 from app.models.traffic_record import TrafficRecord
 from app.models.user import UserRole
-from app.schemas.alerts import AlertResponse, DashboardSummary
+from app.schemas.alerts import (
+    ActiveThreatResponse,
+    AlertResponse,
+    DashboardSummary,
+    MttrIncidentResponse,
+    MttrSummaryResponse,
+)
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
@@ -46,4 +54,67 @@ def dashboard(
         incidents_open=incidents_open,
         avg_risk_score=float(avg_risk),
         class_distribution={label: count for label, count in class_rows},
+    )
+
+
+@router.get("/active-threats", response_model=list[ActiveThreatResponse])
+def active_threats(
+    db: Session = Depends(get_db),
+    _user=Depends(require_roles(UserRole.admin, UserRole.analyst, UserRole.viewer)),
+) -> list[ActiveThreatResponse]:
+    rows = (
+        db.query(Alert, TrafficRecord)
+        .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
+        .filter(Alert.severity.in_([AlertSeverity.critical, AlertSeverity.high]))
+        .order_by(Alert.created_at.desc())
+        .limit(100)
+        .all()
+    )
+
+    result: list[ActiveThreatResponse] = []
+    for alert, record in rows:
+        result.append(
+            ActiveThreatResponse(
+                threat_id=f"T-{alert.id}",
+                attack_vector=record.attack_class or alert.summary,
+                target_asset=record.destination_ip,
+                risk=alert.severity.value.upper(),
+                created_at=alert.created_at,
+            )
+        )
+    return result
+
+
+@router.get("/mttr", response_model=MttrSummaryResponse)
+def mttr_summary(
+    db: Session = Depends(get_db),
+    _user=Depends(require_roles(UserRole.admin, UserRole.analyst, UserRole.viewer)),
+) -> MttrSummaryResponse:
+    incidents = db.query(Incident).order_by(Incident.created_at.desc()).limit(50).all()
+    now = datetime.now(timezone.utc)
+
+    items: list[MttrIncidentResponse] = []
+    mttr_values: list[int] = []
+
+    for incident in incidents:
+        opened = incident.created_at.replace(tzinfo=timezone.utc) if incident.created_at.tzinfo is None else incident.created_at
+        minutes = max(1, int((now - opened).total_seconds() // 60))
+        items.append(
+            MttrIncidentResponse(
+                incident_id=f"INC-{incident.id}",
+                opened_at=incident.created_at,
+                resolved_at=None,
+                status=incident.status.value,
+                mttr_minutes=minutes,
+            )
+        )
+        if incident.status == IncidentStatus.resolved:
+            mttr_values.append(minutes)
+
+    average = int(sum(mttr_values) / len(mttr_values)) if mttr_values else (int(sum(i.mttr_minutes for i in items) / len(items)) if items else 0)
+
+    return MttrSummaryResponse(
+        average_mttr_minutes=average,
+        target_sla_minutes=20,
+        incidents=items,
     )

@@ -8,6 +8,7 @@ type AuthSession = {
     id: string;
     email: string;
     fullName?: string;
+    role?: "admin" | "analyst" | "viewer";
   };
 };
 
@@ -34,7 +35,17 @@ export function getAuthSession(): AuthSession | null {
   }
 
   try {
-    return JSON.parse(raw) as AuthSession;
+    const parsed = JSON.parse(raw) as AuthSession;
+    const token = parsed?.token ?? "";
+    const isLegacyToken = token === "placeholder-jwt-token";
+    const isLikelyJwt = token.split(".").length === 3;
+
+    if (!token || isLegacyToken || !isLikelyJwt) {
+      localStorage.removeItem(SESSION_KEY);
+      return null;
+    }
+
+    return parsed;
   } catch {
     localStorage.removeItem(SESSION_KEY);
     return null;

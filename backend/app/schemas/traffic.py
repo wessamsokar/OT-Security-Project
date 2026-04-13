@@ -46,3 +46,16 @@ class TrafficRecordResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class PacketsByHourRow(BaseModel):
+    hour: str
+    packets: int
+    dominant_protocol: str
+
+
+class PacketsByHourResponse(BaseModel):
+    today_total: int
+    avg_per_minute: int
+    peak_hour: str
+    rows: list[PacketsByHourRow]

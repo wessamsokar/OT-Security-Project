@@ -1,83 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { fetchAlerts, fetchDashboardSummary, type AlertResponse, type DashboardSummary } from "../api/alertsApi";
+import { fetchModelVersions } from "../api/modelApi";
+import { connectAlertsStream } from "../api/streamApi";
 import { getAuthSession } from "../lib/authSession";
 
-type AlertItem = {
-  id: string;
-  severity: "High" | "Medium" | "Low";
-  attackType: string;
-  sourceIp: string;
-  targetDevice: string;
-  time: string;
-};
-
-type LogItem = {
-  id: string;
-  timestamp: string;
-  sourceIp: string;
-  destinationIp: string;
-  protocol: string;
-  classification: "Normal" | "Suspicious" | "Attack";
-};
-
 type TrafficPoint = {
-  hour: string;
+  label: string;
   value: number;
   kind: "normal" | "suspicious" | "attack";
 };
 
-const alertPool: Omit<AlertItem, "id" | "time">[] = [
-  { severity: "High", attackType: "Modbus Injection", sourceIp: "192.168.1.83", targetDevice: "PLC-01" },
-  { severity: "Medium", attackType: "Port Scan", sourceIp: "192.168.1.56", targetDevice: "SCADA-01" },
-  { severity: "Low", attackType: "Replay Attack", sourceIp: "192.168.1.102", targetDevice: "HMI-02" },
-  { severity: "High", attackType: "DoS", sourceIp: "192.168.1.74", targetDevice: "RTU-03" },
-  { severity: "Medium", attackType: "Brute Force", sourceIp: "192.168.1.120", targetDevice: "ENG-WS-01" }
-];
-
-const initialLogs: LogItem[] = [
-  {
-    id: "l1",
-    timestamp: "2026-04-08 10:11:42",
-    sourceIp: "192.168.1.31",
-    destinationIp: "192.168.1.10",
-    protocol: "Modbus",
-    classification: "Normal"
-  },
-  {
-    id: "l2",
-    timestamp: "2026-04-08 10:12:15",
-    sourceIp: "192.168.1.77",
-    destinationIp: "192.168.1.20",
-    protocol: "TCP",
-    classification: "Suspicious"
-  },
-  {
-    id: "l3",
-    timestamp: "2026-04-08 10:12:59",
-    sourceIp: "192.168.1.83",
-    destinationIp: "192.168.1.10",
-    protocol: "Modbus",
-    classification: "Attack"
-  },
-  {
-    id: "l4",
-    timestamp: "2026-04-08 10:13:20",
-    sourceIp: "192.168.1.53",
-    destinationIp: "192.168.1.21",
-    protocol: "EtherNet/IP",
-    classification: "Normal"
-  },
-  {
-    id: "l5",
-    timestamp: "2026-04-08 10:14:04",
-    sourceIp: "192.168.1.74",
-    destinationIp: "192.168.1.30",
-    protocol: "UDP",
-    classification: "Attack"
-  }
-];
-
-function severityClasses(severity: AlertItem["severity"]) {
+function severityClasses(severity: "High" | "Medium" | "Low") {
   if (severity === "High") return "bg-rose-500/20 text-rose-300";
   if (severity === "Medium") return "bg-amber-500/20 text-amber-300";
   return "bg-emerald-500/20 text-emerald-300";
@@ -89,76 +23,112 @@ function trafficClasses(kind: TrafficPoint["kind"]) {
   return "bg-sky-500";
 }
 
-function logClasses(classification: LogItem["classification"]) {
-  if (classification === "Attack") return "text-rose-200";
-  if (classification === "Suspicious") return "text-amber-200";
-  return "text-muted";
+function labelKind(label: string): TrafficPoint["kind"] {
+  const lowered = label.toLowerCase();
+  if (lowered.includes("flood") || lowered.includes("dos") || lowered.includes("attack")) return "attack";
+  if (lowered.includes("scan") || lowered.includes("recon") || lowered.includes("unknown")) return "suspicious";
+  return "normal";
+}
+
+function logClasses(severity: AlertResponse["severity"]) {
+  if (severity === "critical" || severity === "high") return "text-rose-200";
+  if (severity === "medium") return "text-amber-200";
+  return "text-emerald-200";
 }
 
 export function DashboardPage() {
-  const [packetCount, setPacketCount] = useState(125460);
-  const [alerts, setAlerts] = useState<AlertItem[]>(() =>
-    alertPool.map((item, index) => ({
-      ...item,
-      id: `a-${index + 1}`,
-      time: new Date(Date.now() - index * 60000).toLocaleTimeString()
-    }))
-  );
-  const [logs, setLogs] = useState<LogItem[]>(initialLogs);
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [alerts, setAlerts] = useState<AlertResponse[]>([]);
+  const [mlConfidence, setMlConfidence] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      setPacketCount((prev) => prev + Math.floor(Math.random() * 45) + 18);
+    let active = true;
 
-      if (Math.random() > 0.55) {
-        const template = alertPool[Math.floor(Math.random() * alertPool.length)];
-        const nextAlert: AlertItem = {
-          ...template,
-          id: `a-${Date.now()}`,
-          time: new Date().toLocaleTimeString()
-        };
-        setAlerts((prev) => [nextAlert, ...prev].slice(0, 6));
-
-        const nextLog: LogItem = {
-          id: `l-${Date.now()}`,
-          timestamp: new Date().toLocaleString(),
-          sourceIp: template.sourceIp,
-          destinationIp: `192.168.1.${Math.floor(Math.random() * 50) + 10}`,
-          protocol: ["Modbus", "TCP", "UDP", "DNP3", "EtherNet/IP"][Math.floor(Math.random() * 5)],
-          classification: template.severity === "High" ? "Attack" : template.severity === "Medium" ? "Suspicious" : "Normal"
-        };
-        setLogs((prev) => [nextLog, ...prev].slice(0, 8));
+    const extractConfidence = (metrics: Record<string, unknown>): number => {
+      const keys = ["confidence", "confidence_pct", "overall_confidence", "f1", "accuracy"];
+      for (const key of keys) {
+        const value = metrics[key];
+        if (typeof value === "number") {
+          return value <= 1 ? value * 100 : value;
+        }
       }
-    }, 1000);
+      return 0;
+    };
 
-    return () => window.clearInterval(timer);
+    const load = async () => {
+      try {
+        const [dashboardData, alertData, versions] = await Promise.all([
+          fetchDashboardSummary(),
+          fetchAlerts(),
+          fetchModelVersions()
+        ]);
+
+        if (!active) return;
+        const activeModel = versions.find((version) => version.is_active) ?? versions[0] ?? null;
+        setSummary(dashboardData);
+        setAlerts(alertData);
+        setMlConfidence(extractConfidence(activeModel?.metrics_json ?? {}));
+        setError("");
+      } catch (err) {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : "Unable to load dashboard metrics right now.");
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void load();
+
+    const stream = connectAlertsStream(
+      (snapshot) => {
+        if (!active) return;
+        setSummary(snapshot.dashboard);
+        setAlerts(snapshot.alerts);
+        setMlConfidence(snapshot.ml_confidence);
+        setError("");
+        setLoading(false);
+      },
+      () => {
+        if (!active) return;
+        setError("Live stream disconnected. Showing latest available dashboard snapshot.");
+      }
+    );
+
+    return () => {
+      active = false;
+      stream?.close();
+    };
   }, []);
 
   const session = getAuthSession();
   const welcomeName = session?.user.fullName ?? "Security Analyst";
   const firstName = welcomeName.split(" ")[0] ?? "Analyst";
 
-  const totalAlertsToday = useMemo(() => 26 + alerts.length, [alerts]);
-  const activeThreats = useMemo(() => alerts.filter((item) => item.severity === "High").length + 1, [alerts]);
-  const mlConfidence = useMemo(() => 94 + ((packetCount % 30) / 10), [packetCount]);
+  const packetCount = summary?.total_records ?? 0;
+  const totalAlertsToday = summary?.total_alerts ?? 0;
+  const activeThreats = useMemo(() => {
+    return alerts.filter((item) => item.severity === "critical" || item.severity === "high").length;
+  }, [alerts]);
+  const meanRiskPct = ((summary?.avg_risk_score ?? 0) * 100).toFixed(1);
 
   const trafficSeries: TrafficPoint[] = useMemo(
-    () => [
-      { hour: "01", value: 140, kind: "normal" },
-      { hour: "02", value: 128, kind: "normal" },
-      { hour: "03", value: 166, kind: "suspicious" },
-      { hour: "04", value: 175, kind: "normal" },
-      { hour: "05", value: 190, kind: "attack" },
-      { hour: "06", value: 212, kind: "normal" },
-      { hour: "07", value: 238, kind: "suspicious" },
-      { hour: "08", value: 262, kind: "normal" },
-      { hour: "09", value: 248, kind: "normal" },
-      { hour: "10", value: 221, kind: "attack" },
-      { hour: "11", value: 239, kind: "suspicious" },
-      { hour: "12", value: 272 + (packetCount % 20), kind: "normal" }
-    ],
-    [packetCount]
+    () =>
+      Object.entries(summary?.class_distribution ?? {})
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 12)
+        .map(([label, value]) => ({
+          label,
+          value,
+          kind: labelKind(label)
+        })),
+    [summary]
   );
+
+  const topClasses = trafficSeries.slice(0, 3);
 
   return (
     <section className="space-y-5 rounded-3xl border border-white/10 bg-panel/45 p-6 shadow-panel">
@@ -167,6 +137,9 @@ export function DashboardPage() {
         <h1 className="mt-2 text-2xl font-semibold text-white">Welcome back, {firstName}</h1>
         <p className="mt-1 text-sm text-muted">Assigned SOC view with real-time alerts, traffic, tasks, and security posture.</p>
       </div>
+
+      {loading ? <p className="text-sm text-muted">Loading dashboard data...</p> : null}
+      {error ? <p className="text-sm text-danger">{error}</p> : null}
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
         <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -183,7 +156,7 @@ export function DashboardPage() {
         </article>
         <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <p className="text-xs uppercase tracking-wide text-muted">MTTR</p>
-          <p className="mt-2 text-3xl font-semibold text-white">18m</p>
+          <p className="mt-2 text-3xl font-semibold text-white">Pending</p>
         </article>
         <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <p className="text-xs uppercase tracking-wide text-muted">ML Confidence</p>
@@ -204,16 +177,17 @@ export function DashboardPage() {
 
           <div className="mt-4 grid grid-cols-12 items-end gap-2">
             {trafficSeries.map((point) => (
-              <div key={point.hour} className="flex flex-col items-center gap-2">
+              <div key={point.label} className="flex flex-col items-center gap-2">
                 <div className="flex h-36 w-full max-w-8 items-end rounded-sm bg-background/40 p-[2px]">
                   <div
                     className={`w-full rounded-sm ${trafficClasses(point.kind)}`}
-                    style={{ height: `${Math.max(8, Math.min(100, Math.round((point.value / 300) * 100)))}%` }}
+                    style={{ height: `${Math.max(8, Math.min(100, Math.round((point.value / Math.max(1, packetCount)) * 900)))}%` }}
                   />
                 </div>
-                <span className="text-[11px] text-muted">{point.hour}</span>
+                <span className="text-[11px] text-muted">{point.label.slice(0, 6)}</span>
               </div>
             ))}
+            {!trafficSeries.length ? <p className="col-span-12 text-sm text-muted">No class distribution data yet.</p> : null}
           </div>
         </article>
 
@@ -240,42 +214,48 @@ export function DashboardPage() {
         <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <h2 className="text-lg font-medium text-white">Live Alerts</h2>
           <div className="mt-3 space-y-2">
-            {alerts.map((alert) => (
+            {alerts.slice(0, 6).map((alert) => (
               <div key={alert.id} className="rounded-xl border border-white/10 bg-background/40 p-3">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <p className="text-sm font-medium text-white">{alert.attackType}</p>
-                    <p className="mt-1 text-xs text-muted">{alert.sourceIp} to {alert.targetDevice}</p>
+                    <p className="text-sm font-medium text-white">{alert.summary}</p>
+                    <p className="mt-1 text-xs text-muted">Traffic Record: {alert.traffic_record_id}</p>
                   </div>
-                  <span className={`rounded-full px-2 py-0.5 text-xs ${severityClasses(alert.severity)}`}>{alert.severity}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs ${severityClasses(alert.severity === "critical" ? "High" : alert.severity === "high" ? "High" : alert.severity === "medium" ? "Medium" : "Low")}`}>{alert.severity.toUpperCase()}</span>
                 </div>
-                <p className="mt-2 text-xs text-muted">{alert.time}</p>
+                <p className="mt-2 text-xs text-muted">{new Date(alert.created_at).toLocaleString()}</p>
               </div>
             ))}
+            {!alerts.length ? <p className="text-sm text-muted">No live alerts yet.</p> : null}
           </div>
         </article>
 
         <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <h2 className="text-lg font-medium text-white">Recent Logs</h2>
+          <h2 className="text-lg font-medium text-white">Recent Detections</h2>
           <div className="mt-3 overflow-x-auto">
             <table className="min-w-full text-left text-xs">
               <thead className="text-muted">
                 <tr>
                   <th className="pb-2 pr-3">Timestamp</th>
-                  <th className="pb-2 pr-3">Source</th>
-                  <th className="pb-2 pr-3">Protocol</th>
-                  <th className="pb-2">Class</th>
+                  <th className="pb-2 pr-3">Alert</th>
+                  <th className="pb-2 pr-3">Record</th>
+                  <th className="pb-2">Severity</th>
                 </tr>
               </thead>
               <tbody>
-                {logs.map((log) => (
-                  <tr key={log.id} className="border-t border-white/10">
-                    <td className="py-2 pr-3 text-muted">{log.timestamp}</td>
-                    <td className="py-2 pr-3 text-muted">{log.sourceIp}</td>
-                    <td className="py-2 pr-3 text-muted">{log.protocol}</td>
-                    <td className={`py-2 font-medium ${logClasses(log.classification)}`}>{log.classification}</td>
+                {alerts.slice(0, 8).map((alert) => (
+                  <tr key={alert.id} className="border-t border-white/10">
+                    <td className="py-2 pr-3 text-muted">{new Date(alert.created_at).toLocaleString()}</td>
+                    <td className="py-2 pr-3 text-muted">{alert.summary}</td>
+                    <td className="py-2 pr-3 text-muted">{alert.traffic_record_id}</td>
+                    <td className={`py-2 font-medium ${logClasses(alert.severity)}`}>{alert.severity.toUpperCase()}</td>
                   </tr>
                 ))}
+                {!alerts.length ? (
+                  <tr>
+                    <td colSpan={4} className="py-3 text-muted">No detections recorded yet.</td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
           </div>
@@ -284,20 +264,15 @@ export function DashboardPage() {
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <h2 className="text-lg font-medium text-white">Top Risky Assets</h2>
+          <h2 className="text-lg font-medium text-white">Top Attack Classes</h2>
           <div className="mt-3 space-y-2 text-sm">
-            <div className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
-              <span className="text-white">PLC-01 (Modbus)</span>
-              <span className="text-rose-200">11 alerts</span>
-            </div>
-            <div className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
-              <span className="text-white">SCADA-01 (TCP)</span>
-              <span className="text-amber-200">7 alerts</span>
-            </div>
-            <div className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
-              <span className="text-white">RTU-03 (DNP3)</span>
-              <span className="text-amber-200">5 alerts</span>
-            </div>
+            {topClasses.map((entry) => (
+              <div key={entry.label} className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
+                <span className="text-white">{entry.label}</span>
+                <span className="text-rose-200">{entry.value} flows</span>
+              </div>
+            ))}
+            {!topClasses.length ? <p className="text-muted">No class data available yet.</p> : null}
           </div>
         </article>
 
@@ -305,20 +280,20 @@ export function DashboardPage() {
           <h2 className="text-lg font-medium text-white">Security Posture</h2>
           <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
             <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-              <p className="text-xs text-muted">System Uptime</p>
-              <p className="mt-1 text-white">99.92%</p>
+              <p className="text-xs text-muted">Incidents Open</p>
+              <p className="mt-1 text-white">{summary?.incidents_open ?? 0}</p>
             </div>
             <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-              <p className="text-xs text-muted">Blocked IPs</p>
-              <p className="mt-1 text-white">14</p>
+              <p className="text-xs text-muted">Avg Risk Score</p>
+              <p className="mt-1 text-white">{meanRiskPct}%</p>
             </div>
             <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-              <p className="text-xs text-muted">Failed Logins</p>
-              <p className="mt-1 text-white">9</p>
+              <p className="text-xs text-muted">Alerts</p>
+              <p className="mt-1 text-white">{totalAlertsToday}</p>
             </div>
             <div className="rounded-xl border border-white/10 bg-background/40 p-3">
               <p className="text-xs text-muted">Model Drift</p>
-              <p className="mt-1 text-emerald-200">Stable</p>
+              <p className="mt-1 text-emerald-200">Monitoring</p>
             </div>
           </div>
         </article>

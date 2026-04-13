@@ -1,10 +1,43 @@
+import { useEffect, useState } from "react";
+
+import { fetchPacketsByHour, type PacketsByHourResponse } from "../api/phase2Api";
+
 export function PacketsAnalysedPage() {
-  const rows = [
-    { hour: "08:00", packets: 18450, protocol: "Modbus" },
-    { hour: "09:00", packets: 22104, protocol: "TCP" },
-    { hour: "10:00", packets: 19740, protocol: "EtherNet/IP" },
-    { hour: "11:00", packets: 24820, protocol: "DNP3" }
-  ];
+  const [payload, setPayload] = useState<PacketsByHourResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    const load = async () => {
+      try {
+        const data = await fetchPacketsByHour();
+        if (!active) return;
+        setPayload(data);
+        setError("");
+      } catch (err) {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : "Unable to load packets analytics.");
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void load();
+    const timer = window.setInterval(() => {
+      void load();
+    }, 15000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const rows = payload?.rows ?? [];
 
   return (
     <section className="rounded-3xl border border-white/10 bg-panel/45 p-6 shadow-panel">
@@ -12,18 +45,21 @@ export function PacketsAnalysedPage() {
       <h1 className="mt-2 text-2xl font-semibold text-white">Packets Analysed</h1>
       <p className="mt-1 text-sm text-muted">Detailed packet processing volume for the authenticated user workspace.</p>
 
+      {loading ? <p className="mt-4 text-sm text-muted">Loading packets analytics...</p> : null}
+      {error ? <p className="mt-4 text-sm text-danger">{error}</p> : null}
+
       <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
         <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <p className="text-xs text-muted">Today Total</p>
-          <p className="mt-2 text-3xl font-semibold text-white">125,460</p>
+          <p className="mt-2 text-3xl font-semibold text-white">{(payload?.today_total ?? 0).toLocaleString()}</p>
         </article>
         <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <p className="text-xs text-muted">Avg / Minute</p>
-          <p className="mt-2 text-3xl font-semibold text-white">214</p>
+          <p className="mt-2 text-3xl font-semibold text-white">{payload?.avg_per_minute ?? 0}</p>
         </article>
         <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <p className="text-xs text-muted">Peak Hour</p>
-          <p className="mt-2 text-3xl font-semibold text-white">11:00</p>
+          <p className="mt-2 text-3xl font-semibold text-white">{payload?.peak_hour ?? "N/A"}</p>
         </article>
       </div>
 
@@ -41,9 +77,14 @@ export function PacketsAnalysedPage() {
               <tr key={row.hour} className="border-t border-white/10">
                 <td className="px-4 py-3 text-white">{row.hour}</td>
                 <td className="px-4 py-3 text-muted">{row.packets.toLocaleString()}</td>
-                <td className="px-4 py-3 text-muted">{row.protocol}</td>
+                <td className="px-4 py-3 text-muted">{row.dominant_protocol}</td>
               </tr>
             ))}
+            {!loading && !rows.length ? (
+              <tr className="border-t border-white/10">
+                <td className="px-4 py-3 text-muted" colSpan={3}>No traffic records found in the last 24h.</td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>

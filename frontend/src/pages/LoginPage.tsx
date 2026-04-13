@@ -16,8 +16,8 @@ export function LoginPage() {
 
   const errors = useMemo(() => {
     return {
-      email: email && !email.includes("@") ? "Please enter a valid email address." : "",
-      password: password && password.length < 8 ? "Password must be at least 8 characters." : ""
+      email: email && email.trim().length < 3 ? "Please enter your username." : "",
+      password: password && password.length < 3 ? "Password must be at least 3 characters." : ""
     };
   }, [email, password]);
 
@@ -47,9 +47,8 @@ export function LoginPage() {
       <form className="space-y-4" onSubmit={onSubmit} noValidate>
         <InputField
           id="email"
-          label="Work Email"
-          type="email"
-          placeholder="you@company.com"
+          label="Username"
+          placeholder="admin"
           value={email}
           onChange={setEmail}
           error={errors.email}

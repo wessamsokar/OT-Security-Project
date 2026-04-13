@@ -1,3 +1,6 @@
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -6,7 +9,13 @@ from app.models.alert import Alert
 from app.models.model_version import ModelVersion
 from app.models.traffic_record import TrafficRecord
 from app.models.user import UserRole
-from app.schemas.traffic import DetectionResponse, ICSTrafficIn, TrafficRecordResponse
+from app.schemas.traffic import (
+    DetectionResponse,
+    ICSTrafficIn,
+    PacketsByHourResponse,
+    PacketsByHourRow,
+    TrafficRecordResponse,
+)
 from app.services.alerts import make_alert_summary, score_to_severity, should_generate_alert
 from app.services.ml_client import run_inference
 from app.db.session import get_db
@@ -105,4 +114,39 @@ async def run_detection(
         confidence=record.confidence,
         explanation=result["explanation"],
         model_version=active_model.version if active_model else None,
+    )
+
+
+@router.get("/packets-by-hour", response_model=PacketsByHourResponse)
+def packets_by_hour(
+    db: Session = Depends(get_db),
+    _user=Depends(require_roles(UserRole.admin, UserRole.analyst, UserRole.viewer)),
+) -> PacketsByHourResponse:
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    records = db.query(TrafficRecord).filter(TrafficRecord.created_at >= since).all()
+
+    per_hour_packets: dict[str, int] = defaultdict(int)
+    per_hour_protocols: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
+    for record in records:
+        hour_key = record.created_at.strftime("%H:00")
+        per_hour_packets[hour_key] += int(record.packet_count)
+        protocol = record.transport_protocol.upper()
+        per_hour_protocols[hour_key][protocol] += int(record.packet_count)
+
+    rows: list[PacketsByHourRow] = []
+    for hour in sorted(per_hour_packets.keys()):
+        protocol_counts = per_hour_protocols[hour]
+        dominant_protocol = max(protocol_counts, key=protocol_counts.get) if protocol_counts else "N/A"
+        rows.append(PacketsByHourRow(hour=hour, packets=per_hour_packets[hour], dominant_protocol=dominant_protocol))
+
+    today_total = sum(per_hour_packets.values())
+    avg_per_minute = int(today_total / (24 * 60)) if today_total else 0
+    peak_hour = max(per_hour_packets, key=per_hour_packets.get) if per_hour_packets else "N/A"
+
+    return PacketsByHourResponse(
+        today_total=today_total,
+        avg_per_minute=avg_per_minute,
+        peak_hour=peak_hour,
+        rows=rows,
     )

@@ -1,97 +1,49 @@
+import { apiClient } from "./client";
 import type { AuthApiResponse, AuthFormValues } from "../types/auth";
 
-const fakeLatency = async (ms = 900) => {
-  await new Promise((resolve) => setTimeout(resolve, ms));
+type LoginResponse = {
+  access_token: string;
+  token_type: "bearer";
 };
 
-const USERS_KEY = "ot_sentinel_registered_users";
-
-type RegisteredUser = {
-  id: string;
+type MeResponse = {
+  id: number;
+  username: string;
   email: string;
-  fullName: string;
-  password: string;
+  role: "admin" | "analyst" | "viewer";
 };
-
-function getRegisteredUsers(): RegisteredUser[] {
-  const raw = localStorage.getItem(USERS_KEY);
-  if (!raw) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as RegisteredUser[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    localStorage.removeItem(USERS_KEY);
-    return [];
-  }
-}
-
-function saveRegisteredUsers(users: RegisteredUser[]) {
-  localStorage.setItem(USERS_KEY, JSON.stringify(users));
-}
 
 export async function loginUser(values: AuthFormValues): Promise<AuthApiResponse> {
-  await fakeLatency();
-
-  if (!values.email.includes("@") || values.password.length < 8) {
-    throw new Error("Invalid email or password format.");
+  if (!values.email.trim() || !values.password) {
+    throw new Error("Username and password are required.");
   }
 
-  const users = getRegisteredUsers();
-  const matchedUser = users.find((user) => user.email.toLowerCase() === values.email.toLowerCase());
+  const loginResponse = await apiClient.post<LoginResponse>("/v1/auth/login", {
+    username: values.email.trim(),
+    password: values.password
+  });
 
-  if (!matchedUser) {
-    throw new Error("Account not found. Please create an account first.");
-  }
+  const token = loginResponse.data.access_token;
+  const meResponse = await apiClient.get<MeResponse>("/v1/auth/me", {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
 
-  if (matchedUser.password !== values.password) {
-    throw new Error("Incorrect password for this account.");
-  }
+  const me = meResponse.data;
 
   return {
-    accessToken: "placeholder-jwt-token",
+    accessToken: token,
     user: {
-      id: matchedUser.id,
-      email: matchedUser.email,
-      fullName: matchedUser.fullName
+      id: String(me.id),
+      email: me.email,
+      fullName: me.username,
+      role: me.role
     }
   };
 }
 
 export async function registerUser(values: AuthFormValues): Promise<AuthApiResponse> {
-  await fakeLatency(1100);
-
-  if (!values.fullName || values.fullName.trim().length < 3) {
-    throw new Error("Full name must be at least 3 characters.");
-  }
-
-  if (!values.email.includes("@") || values.password.length < 8) {
-    throw new Error("Please provide valid registration credentials.");
-  }
-
-  const users = getRegisteredUsers();
-  const alreadyExists = users.some((user) => user.email.toLowerCase() === values.email.toLowerCase());
-  if (alreadyExists) {
-    throw new Error("This email is already registered. Please login.");
-  }
-
-  const normalizedName = values.fullName.trim();
-  const newUser: RegisteredUser = {
-    id: `u-${Date.now()}`,
-    email: values.email,
-    fullName: normalizedName,
-    password: values.password
-  };
-  saveRegisteredUsers([...users, newUser]);
-
-  return {
-    accessToken: "placeholder-jwt-token",
-    user: {
-      id: newUser.id,
-      email: values.email,
-      fullName: normalizedName
-    }
-  };
+  void values;
+  throw new Error("Self-registration is disabled. Ask an admin to create your account.");
 }
