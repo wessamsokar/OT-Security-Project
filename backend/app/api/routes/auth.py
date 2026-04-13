@@ -6,13 +6,35 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
 from app.core.config import get_settings
-from app.core.security import create_access_token, verify_password
+from app.core.security import create_access_token, get_password_hash, verify_password
 from app.db.session import get_db
-from app.models.user import User
-from app.schemas.auth import LoginRequest, TokenResponse, UserResponse
+from app.models.user import User, UserRole
+from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
+
+
+@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserResponse:
+    full_name = payload.full_name.strip()
+    email = payload.email.strip().lower()
+
+    existing = db.query(User).filter(or_(User.username == full_name, User.email == email)).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email or full name is already in use")
+
+    user = User(
+        username=full_name,
+        email=email,
+        hashed_password=get_password_hash(payload.password),
+        role=UserRole.viewer,
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 @router.post("/login", response_model=TokenResponse)

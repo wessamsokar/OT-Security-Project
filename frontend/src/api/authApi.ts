@@ -43,7 +43,14 @@ export async function loginUser(values: AuthFormValues): Promise<AuthApiResponse
   };
 }
 
-export async function registerUser(values: AuthFormValues): Promise<AuthApiResponse> {
-  void values;
-  throw new Error("Self-registration is disabled. Ask an admin to create your account.");
+export async function registerUser(values: AuthFormValues): Promise<void> {
+  if (!values.fullName?.trim() || !values.email.trim() || !values.password) {
+    throw new Error("Full name, email, and password are required.");
+  }
+
+  await apiClient.post("/v1/auth/register", {
+    full_name: values.fullName.trim(),
+    email: values.email.trim(),
+    password: values.password
+  });
 }
