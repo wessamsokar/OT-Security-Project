@@ -1,0 +1,13 @@
+{
+  "threshold_99pct": 23.220314765698298,
+  "threshold_3std": 23.299482285995236,
+  "threshold_995pct": 32.295661174201555,
+  "threshold_optimal": 17.116874439033307,
+  "val_mse_mean": 0.011951346278839045,
+  "val_mse_std": 0.0821648270650701,
+  "scaler_type": "RobustScaler",
+  "clip_range": [
+    -10,
+    10
+  ]
+}

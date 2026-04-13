@@ -10,10 +10,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --isolated --no-cache-dir --default-timeout=1200 --retries=10 -r requirements.txt
 
 COPY . /app
 
 EXPOSE 8001
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["uvicorn", "api.api:app", "--host", "0.0.0.0", "--port", "8001"]

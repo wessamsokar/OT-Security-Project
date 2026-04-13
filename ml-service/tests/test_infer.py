@@ -1,11 +1,16 @@
 from fastapi.testclient import TestClient
+import pytest
 
-from app.main import app
-
-client = TestClient(app)
+from api.api import app
 
 
-def test_infer_returns_expected_fields():
+@pytest.fixture
+def client():
+    with TestClient(app) as c:
+        yield c
+
+
+def test_infer_returns_expected_fields(client):
     payload = {
         "packet_count": 80,
         "bytes_in": 4200,
@@ -29,3 +34,23 @@ def test_infer_returns_expected_fields():
     assert "attack_class" in body
     assert "confidence" in body
     assert "explanation" in body
+
+
+def test_readyz_includes_pipeline_mode(client):
+    response = client.get("/readyz")
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["status"] == "ready"
+    assert "model_version" in body
+    assert body["model_version"].startswith("smartgrid-")
+
+
+def test_retrain_returns_backward_compatible_shape(client):
+    response = client.post("/retrain", json={"triggered_by": "test-user"})
+    assert response.status_code == 200
+
+    body = response.json()
+    assert "model_version" in body
+    assert "label" in body
+    assert "metrics" in body
