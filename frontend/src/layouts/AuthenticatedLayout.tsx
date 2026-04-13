@@ -11,6 +11,8 @@ import {
 	Shield,
 	ShieldCheck
 } from "lucide-react";
+import { motion } from "framer-motion";
+import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 
 import { Navbar } from "../components/layout/Navbar";
@@ -30,12 +32,23 @@ const menuItems = [
 ];
 
 export function AuthenticatedLayout() {
+	const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
 	return (
 		<div className="min-h-screen bg-transparent text-text">
-			<Navbar />
+			<Navbar isSidebarOpen={isSidebarOpen} onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)} />
 
 			<div className="mx-auto flex max-w-7xl px-4 pb-8 pt-24 md:px-8">
-				<aside className="sticky top-24 hidden h-[calc(100vh-7rem)] w-64 shrink-0 rounded-2xl border border-white/10 bg-panel/40 p-4 md:block">
+				<motion.aside
+					initial={false}
+					animate={
+						isSidebarOpen
+							? { width: 256, opacity: 1, x: 0 }
+							: { width: 0, opacity: 0, x: -22 }
+					}
+					transition={{ duration: 0.36, ease: [0.22, 1, 0.36, 1] }}
+					className="sticky top-24 hidden h-[calc(100vh-7rem)] shrink-0 overflow-hidden rounded-2xl border border-white/10 bg-panel/40 p-4 md:block"
+				>
 					<div className="mb-4 inline-flex items-center gap-2 rounded-lg bg-brand/15 px-3 py-2 text-xs uppercase tracking-[0.14em] text-brand">
 						<ShieldCheck size={14} /> OT Control Center
 					</div>
@@ -60,33 +73,16 @@ export function AuthenticatedLayout() {
 							);
 						})}
 					</nav>
-				</aside>
+				</motion.aside>
 
-				<div className="w-full md:ml-6">
-					<div className="mb-4 grid grid-cols-1 gap-2 md:hidden">
-						{menuItems.map((item) => {
-							const Icon = item.icon;
-							return (
-								<NavLink
-									key={item.to}
-									to={item.to}
-									end={item.to === "/dashboard"}
-									className={({ isActive }) =>
-										[
-											"flex items-center gap-2 rounded-xl border px-3 py-2 text-sm",
-											isActive ? "border-brand/50 bg-brand/15 text-white" : "border-white/10 bg-panel/40 text-muted"
-										].join(" ")
-									}
-								>
-									<Icon size={15} />
-									<span>{item.label}</span>
-								</NavLink>
-							);
-						})}
-					</div>
-
+				<motion.div
+					initial={false}
+					animate={{ paddingLeft: isSidebarOpen ? 24 : 0 }}
+					transition={{ duration: 0.36, ease: [0.22, 1, 0.36, 1] }}
+					className="min-w-0 flex-1"
+				>
 					<Outlet />
-				</div>
+				</motion.div>
 			</div>
 		</div>
 	);
