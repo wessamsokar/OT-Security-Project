@@ -34,7 +34,6 @@ export const TOP_NAV_ITEMS: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", roles: ALL_ROLES },
   { to: "/dashboard/alerts", label: "Alerts", roles: ALL_ROLES },
   { to: "/dashboard/devices", label: "Devices", roles: ALL_ROLES },
-  { to: "/dashboard/demo", label: "Detection Demo", roles: ["admin", "customer"] },
   { to: "/dashboard/admin/users", label: "Admin", roles: ["admin"] }
 ];
 
@@ -58,16 +57,15 @@ export const SIDEBAR_SECTIONS: NavSection[] = [
   {
     title: "Analytics",
     items: [
-      { to: "/dashboard/mttr", label: "MTTR", icon: Clock3, roles: ALL_ROLES },
-      { to: "/dashboard/ml-confidence", label: "ML Confidence", icon: BrainCircuit, roles: ALL_ROLES },
-      { to: "/dashboard/security-posture", label: "Security Posture", icon: Shield, roles: ALL_ROLES }
+      { to: "/dashboard/mttr", label: "MTTR", icon: Clock3, roles: ["admin"] },
+      { to: "/dashboard/ml-confidence", label: "ML Confidence", icon: BrainCircuit, roles: ["admin"] },
+      { to: "/dashboard/security-posture", label: "Security Posture", icon: Shield, roles: ["admin"] }
     ]
   },
   {
     title: "Workflows",
     items: [
-      { to: "/dashboard/my-tasks", label: "My Tasks", icon: ListChecks, roles: ["admin", "customer"] },
-      { to: "/dashboard/demo", label: "Detection Demo", icon: ShieldCheck, roles: ["admin", "customer"] }
+      { to: "/dashboard/my-tasks", label: "My Tasks", icon: ListChecks, roles: ["admin"] },
     ]
   },
   {

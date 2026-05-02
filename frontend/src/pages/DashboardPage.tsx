@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchAlerts, fetchDashboardSummary, type AlertResponse, type DashboardSummary } from "../api/alertsApi";
 import { fetchModelVersions } from "../api/modelApi";
 import { connectAlertsStream } from "../api/streamApi";
-import { getAuthSession } from "../lib/authSession";
+import { getAuthSession, hasRole } from "../lib/authSession";
 
 type TrafficPoint = {
   label: string;
@@ -105,6 +105,7 @@ export function DashboardPage() {
   }, []);
 
   const session = getAuthSession();
+  const showAdminInsights = hasRole("admin");
   const welcomeName = session?.user.fullName ?? "Security Analyst";
   const firstName = welcomeName.split(" ")[0] ?? "Analyst";
 
@@ -154,18 +155,24 @@ export function DashboardPage() {
           <p className="text-xs uppercase tracking-wide text-muted">Active Threats</p>
           <p className="mt-2 text-3xl font-semibold text-rose-200">{activeThreats}</p>
         </article>
-        <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <p className="text-xs uppercase tracking-wide text-muted">MTTR</p>
-          <p className="mt-2 text-3xl font-semibold text-white">Pending</p>
-        </article>
-        <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <p className="text-xs uppercase tracking-wide text-muted">ML Confidence</p>
-          <p className="mt-2 text-3xl font-semibold text-emerald-200">{mlConfidence.toFixed(1)}%</p>
-        </article>
+        {showAdminInsights ? (
+          <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <p className="text-xs uppercase tracking-wide text-muted">MTTR</p>
+            <p className="mt-2 text-3xl font-semibold text-white">Pending</p>
+          </article>
+        ) : null}
+        {showAdminInsights ? (
+          <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <p className="text-xs uppercase tracking-wide text-muted">ML Confidence</p>
+            <p className="mt-2 text-3xl font-semibold text-emerald-200">{mlConfidence.toFixed(1)}%</p>
+          </article>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <article className="rounded-2xl border border-white/10 bg-white/5 p-4 xl:col-span-2">
+        <article
+          className={`rounded-2xl border border-white/10 bg-white/5 p-4 ${showAdminInsights ? "xl:col-span-2" : "xl:col-span-3"}`}
+        >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-medium text-white">Network Traffic (Last 12 Hours)</h2>
             <div className="flex items-center gap-3 text-xs text-muted">
@@ -191,23 +198,25 @@ export function DashboardPage() {
           </div>
         </article>
 
-        <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <h2 className="text-lg font-medium text-white">My Tasks</h2>
-          <div className="mt-3 space-y-2 text-sm">
-            <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-              <p className="text-white">Investigate Modbus Injection on PLC-01</p>
-              <p className="mt-1 text-xs text-muted">SLA: 12m remaining</p>
+        {showAdminInsights ? (
+          <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <h2 className="text-lg font-medium text-white">My Tasks</h2>
+            <div className="mt-3 space-y-2 text-sm">
+              <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                <p className="text-white">Investigate Modbus Injection on PLC-01</p>
+                <p className="mt-1 text-xs text-muted">SLA: 12m remaining</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                <p className="text-white">Review replay anomaly at HMI-02</p>
+                <p className="mt-1 text-xs text-muted">SLA: 26m remaining</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                <p className="text-white">Confirm whitelist for inventory scanner</p>
+                <p className="mt-1 text-xs text-muted">SLA: 41m remaining</p>
+              </div>
             </div>
-            <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-              <p className="text-white">Review replay anomaly at HMI-02</p>
-              <p className="mt-1 text-xs text-muted">SLA: 26m remaining</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-              <p className="text-white">Confirm whitelist for inventory scanner</p>
-              <p className="mt-1 text-xs text-muted">SLA: 41m remaining</p>
-            </div>
-          </div>
-        </article>
+          </article>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -263,7 +272,9 @@ export function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+        <article
+          className={`rounded-2xl border border-white/10 bg-white/5 p-4 ${showAdminInsights ? "" : "xl:col-span-2"}`}
+        >
           <h2 className="text-lg font-medium text-white">Top Attack Classes</h2>
           <div className="mt-3 space-y-2 text-sm">
             {topClasses.map((entry) => (
@@ -275,28 +286,29 @@ export function DashboardPage() {
             {!topClasses.length ? <p className="text-muted">No class data available yet.</p> : null}
           </div>
         </article>
-
-        <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <h2 className="text-lg font-medium text-white">Security Posture</h2>
-          <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-            <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-              <p className="text-xs text-muted">Incidents Open</p>
-              <p className="mt-1 text-white">{summary?.incidents_open ?? 0}</p>
+        {showAdminInsights ? (
+          <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <h2 className="text-lg font-medium text-white">Security Posture</h2>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+              <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                <p className="text-xs text-muted">Incidents Open</p>
+                <p className="mt-1 text-white">{summary?.incidents_open ?? 0}</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                <p className="text-xs text-muted">Avg Risk Score</p>
+                <p className="mt-1 text-white">{meanRiskPct}%</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                <p className="text-xs text-muted">Alerts</p>
+                <p className="mt-1 text-white">{totalAlertsToday}</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                <p className="text-xs text-muted">Model Drift</p>
+                <p className="mt-1 text-emerald-200">Monitoring</p>
+              </div>
             </div>
-            <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-              <p className="text-xs text-muted">Avg Risk Score</p>
-              <p className="mt-1 text-white">{meanRiskPct}%</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-              <p className="text-xs text-muted">Alerts</p>
-              <p className="mt-1 text-white">{totalAlertsToday}</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-              <p className="text-xs text-muted">Model Drift</p>
-              <p className="mt-1 text-emerald-200">Monitoring</p>
-            </div>
-          </div>
-        </article>
+          </article>
+        ) : null}
       </div>
     </section>
   );

@@ -8,7 +8,6 @@ import { AlertsPage } from "../pages/AlertsPage";
 import { AdminRolesPage } from "../pages/AdminRolesPage";
 import { AdminUsersPage } from "../pages/AdminUsersPage";
 import { DashboardPage } from "../pages/DashboardPage";
-import { DemoPage } from "../pages/DemoPage";
 import { DevicesPage } from "../pages/DevicesPage";
 import { LiveSnapshotPage } from "../pages/LiveSnapshotPage";
 import { LoginPage } from "../pages/LoginPage";
@@ -17,6 +16,7 @@ import { MttrPage } from "../pages/MttrPage";
 import { MyTasksPage } from "../pages/MyTasksPage";
 import { HomePage } from "../pages/HomePage";
 import { NetworkGraphPage } from "../pages/NetworkGraphPage";
+import { NotFoundPage } from "../pages/NotFoundPage";
 import { PacketsAnalysedPage } from "../pages/PacketsAnalysedPage";
 import { ProfilePage } from "../pages/ProfilePage";
 import { RegisterPage } from "../pages/RegisterPage";
@@ -47,7 +47,7 @@ function GuestOnlyRoute({ children }: { children: JSX.Element }) {
 
 function RoleRoute({ roles, children }: { roles: Array<"admin" | "customer">; children: JSX.Element }) {
   if (!hasRole(roles)) {
-    return <Navigate to="/dashboard" replace />;
+    return <NotFoundPage />;
   }
 
   return children;
@@ -70,26 +70,39 @@ function AnimatedRoutes() {
         { path: "packets-analysed", element: <PacketsAnalysedPage /> },
         { path: "alerts", element: <AlertsPage /> },
         { path: "active-threats", element: <ActiveThreatsPage /> },
-        { path: "mttr", element: <MttrPage /> },
-        { path: "ml-confidence", element: <MlConfidencePage /> },
+        {
+          path: "mttr",
+          element: (
+            <RoleRoute roles={["admin"]}>
+              <MttrPage />
+            </RoleRoute>
+          )
+        },
+        {
+          path: "ml-confidence",
+          element: (
+            <RoleRoute roles={["admin"]}>
+              <MlConfidencePage />
+            </RoleRoute>
+          )
+        },
         {
           path: "my-tasks",
           element: (
-            <RoleRoute roles={["admin", "customer"]}>
+            <RoleRoute roles={["admin"]}>
               <MyTasksPage />
             </RoleRoute>
           )
         },
-        { path: "security-posture", element: <SecurityPosturePage /> },
-        { path: "devices", element: <DevicesPage /> },
         {
-          path: "demo",
+          path: "security-posture",
           element: (
-            <RoleRoute roles={["admin", "customer"]}>
-              <DemoPage />
+            <RoleRoute roles={["admin"]}>
+              <SecurityPosturePage />
             </RoleRoute>
           )
         },
+        { path: "devices", element: <DevicesPage /> },
         {
           path: "admin/users",
           element: (

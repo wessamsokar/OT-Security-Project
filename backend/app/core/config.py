@@ -50,7 +50,7 @@ class Settings(BaseSettings):
         return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
 
     class Config:
-        env_file = ".env.example"
+        env_file = (".env", ".env.example")
         case_sensitive = False
 
 
