@@ -20,16 +20,10 @@ def main() -> None:
                         role=UserRole.admin,
                     ),
                     User(
-                        username="analyst",
-                        email="analyst@ics.local",
-                        hashed_password=get_password_hash("analyst123"),
-                        role=UserRole.analyst,
-                    ),
-                    User(
-                        username="viewer",
-                        email="viewer@ics.local",
-                        hashed_password=get_password_hash("viewer123"),
-                        role=UserRole.viewer,
+                        username="customer",
+                        email="customer@ics.local",
+                        hashed_password=get_password_hash("customer123"),
+                        role=UserRole.customer,
                     ),
                 ]
             )

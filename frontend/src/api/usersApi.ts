@@ -4,7 +4,7 @@ export type UserAdminResponse = {
   id: number;
   username: string;
   email: string;
-  role: "admin" | "analyst" | "viewer";
+  role: "admin" | "customer";
   is_active: boolean;
   is_email_verified: boolean;
   email_verified_at: string | null;
@@ -15,7 +15,7 @@ export type UserCreate = {
   username: string;
   email: string;
   password: string;
-  role?: "admin" | "analyst" | "viewer";
+  role?: "admin" | "customer";
   is_active?: boolean;
   is_email_verified?: boolean;
 };
@@ -24,7 +24,7 @@ export type UserUpdate = {
   username?: string;
   email?: string;
   password?: string;
-  role?: "admin" | "analyst" | "viewer";
+  role?: "admin" | "customer";
   is_active?: boolean;
   is_email_verified?: boolean;
 };

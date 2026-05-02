@@ -26,7 +26,7 @@ settings = get_settings()
 def capture_packets(
     payload: PacketCaptureRequest,
     background_tasks: BackgroundTasks,
-    _user: User = Depends(require_roles(UserRole.admin, UserRole.analyst)),
+    _user: User = Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> PacketCaptureResponse:
     try:
         import scapy.all  # noqa: F401
@@ -57,7 +57,7 @@ def capture_packets(
 @router.post("/stop", response_model=PacketCaptureStatusResponse)
 def stop_capture(
     payload: PacketCaptureStopRequest,
-    _user: User = Depends(require_roles(UserRole.admin, UserRole.analyst)),
+    _user: User = Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> PacketCaptureStatusResponse:
     status_value = stop_packet_capture(payload.capture_id)
     if status_value is None:
@@ -68,7 +68,7 @@ def stop_capture(
 @router.get("/{capture_id}/status", response_model=PacketCaptureStatusResponse)
 def capture_status(
     capture_id: str,
-    _user: User = Depends(require_roles(UserRole.admin, UserRole.analyst)),
+    _user: User = Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> PacketCaptureStatusResponse:
     status_value = get_packet_capture_status(capture_id)
     if status_value is None:

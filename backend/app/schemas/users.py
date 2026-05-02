@@ -9,7 +9,7 @@ class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=50)
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
-    role: UserRole = UserRole.viewer
+    role: UserRole = UserRole.customer
     is_active: bool = True
     is_email_verified: bool = False
 

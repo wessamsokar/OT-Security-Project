@@ -20,10 +20,8 @@ import { NetworkGraphPage } from "../pages/NetworkGraphPage";
 import { PacketsAnalysedPage } from "../pages/PacketsAnalysedPage";
 import { ProfilePage } from "../pages/ProfilePage";
 import { RegisterPage } from "../pages/RegisterPage";
-import { ResetPasswordPage } from "../pages/ResetPasswordPage";
 import { SecurityPosturePage } from "../pages/SecurityPosturePage";
 import { SettingsPrivacyPage } from "../pages/SettingsPrivacyPage";
-import { VerifyEmailPage } from "../pages/VerifyEmailPage";
 
 const pageVariants = {
   initial: { opacity: 0, y: 18, filter: "blur(4px)" },
@@ -47,7 +45,7 @@ function GuestOnlyRoute({ children }: { children: JSX.Element }) {
   return children;
 }
 
-function RoleRoute({ roles, children }: { roles: Array<"admin" | "analyst" | "viewer">; children: JSX.Element }) {
+function RoleRoute({ roles, children }: { roles: Array<"admin" | "customer">; children: JSX.Element }) {
   if (!hasRole(roles)) {
     return <Navigate to="/dashboard" replace />;
   }
@@ -77,7 +75,7 @@ function AnimatedRoutes() {
         {
           path: "my-tasks",
           element: (
-            <RoleRoute roles={["admin", "analyst"]}>
+            <RoleRoute roles={["admin", "customer"]}>
               <MyTasksPage />
             </RoleRoute>
           )
@@ -87,7 +85,7 @@ function AnimatedRoutes() {
         {
           path: "demo",
           element: (
-            <RoleRoute roles={["admin", "analyst"]}>
+            <RoleRoute roles={["admin", "customer"]}>
               <DemoPage />
             </RoleRoute>
           )
@@ -115,8 +113,8 @@ function AnimatedRoutes() {
     },
     { path: "/login", element: <GuestOnlyRoute><LoginPage /></GuestOnlyRoute> },
     { path: "/register", element: <GuestOnlyRoute><RegisterPage /></GuestOnlyRoute> },
-    { path: "/reset-password", element: <GuestOnlyRoute><ResetPasswordPage /></GuestOnlyRoute> },
-    { path: "/verify-email", element: <GuestOnlyRoute><VerifyEmailPage /></GuestOnlyRoute> },
+    { path: "/reset-password", element: <GuestOnlyRoute><LoginPage /></GuestOnlyRoute> },
+    { path: "/verify-email", element: <GuestOnlyRoute><LoginPage /></GuestOnlyRoute> },
     { path: "*", element: <Navigate to={isAuthenticated() ? "/dashboard" : "/login"} replace /> }
   ]);
 }

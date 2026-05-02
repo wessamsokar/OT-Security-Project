@@ -22,8 +22,14 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_
 
 def _normalize_role(role: UserRole | str) -> str:
     if isinstance(role, UserRole):
-        return role.value
-    return str(role)
+        value = role.value
+    else:
+        value = str(role)
+
+    lowered = value.lower()
+    if lowered in {"analyst", "viewer"}:
+        return UserRole.customer.value
+    return lowered
 
 
 def require_roles(*roles: UserRole | str):

@@ -59,7 +59,7 @@ describe("AppRouter Protections", () => {
   it("blocks non-admin users from accessing /dashboard/admin/users", () => {
     vi.mocked(authSession.isAuthenticated).mockReturnValue(true);
     // Pretend user doesn't have the required role (admin)
-    vi.mocked(authSession.hasRole).mockImplementation((roles) => roles.includes("viewer"));
+    vi.mocked(authSession.hasRole).mockImplementation(() => false);
 
     render(
       <MemoryRouter initialEntries={["/dashboard/admin/users"]}>

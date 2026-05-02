@@ -24,7 +24,7 @@ router = APIRouter(prefix="/alerts", tags=["alerts"])
 @router.get("", response_model=list[AlertResponse])
 def list_alerts(
     db: Session = Depends(get_db),
-    _user=Depends(require_roles(UserRole.admin, UserRole.analyst, UserRole.viewer)),
+    _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> list[AlertResponse]:
     return db.query(Alert).order_by(Alert.created_at.desc()).limit(200).all()
 
@@ -32,7 +32,7 @@ def list_alerts(
 @router.get("/dashboard", response_model=DashboardSummary)
 def dashboard(
     db: Session = Depends(get_db),
-    _user=Depends(require_roles(UserRole.admin, UserRole.analyst, UserRole.viewer)),
+    _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> DashboardSummary:
     total_records = db.query(func.count(TrafficRecord.id)).scalar() or 0
     total_alerts = db.query(func.count(Alert.id)).scalar() or 0
@@ -60,7 +60,7 @@ def dashboard(
 @router.get("/active-threats", response_model=list[ActiveThreatResponse])
 def active_threats(
     db: Session = Depends(get_db),
-    _user=Depends(require_roles(UserRole.admin, UserRole.analyst, UserRole.viewer)),
+    _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> list[ActiveThreatResponse]:
     rows = (
         db.query(Alert, TrafficRecord)
@@ -88,7 +88,7 @@ def active_threats(
 @router.get("/mttr", response_model=MttrSummaryResponse)
 def mttr_summary(
     db: Session = Depends(get_db),
-    _user=Depends(require_roles(UserRole.admin, UserRole.analyst, UserRole.viewer)),
+    _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> MttrSummaryResponse:
     incidents = db.query(Incident).order_by(Incident.created_at.desc()).limit(50).all()
     now = datetime.now(timezone.utc)

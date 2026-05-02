@@ -5,9 +5,9 @@ export function ProfilePage() {
   const fullName = session?.user.fullName?.trim() || "OT Analyst";
   const email = session?.user.email || "unknown@ics-guard.local";
   const userId = session?.user.id || "N/A";
-  const role = session?.user.role ?? "viewer";
-
-  const roleLabel = role === "admin" ? "Administrator" : role === "analyst" ? "Security Analyst" : "Viewer";
+  const role = session?.user.role ?? "customer";
+  const normalizedRole = role === "admin" ? "admin" : "customer";
+  const roleLabel = normalizedRole === "admin" ? "Administrator" : "Customer";
 
   return (
     <section className="rounded-3xl border border-white/10 bg-panel/45 p-6 shadow-panel">

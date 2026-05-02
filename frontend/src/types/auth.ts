@@ -10,6 +10,6 @@ export type AuthApiResponse = {
     id: string;
     email: string;
     fullName?: string;
-    role?: "admin" | "analyst" | "viewer";
+    role?: "admin" | "customer";
   };
 };

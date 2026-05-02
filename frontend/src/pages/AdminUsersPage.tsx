@@ -12,7 +12,7 @@ export function AdminUsersPage() {
   const [newUsername, setNewUsername] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
-  const [newRole, setNewRole] = useState<"admin" | "analyst" | "viewer">("viewer");
+  const [newRole, setNewRole] = useState<"admin" | "customer">("customer");
   const [roles, setRoles] = useState<RoleResponse[]>([]);
   const [selectedRoleIds, setSelectedRoleIds] = useState<number[]>([]);
   const [currentRoles, setCurrentRoles] = useState<string[]>([]);
@@ -106,7 +106,7 @@ export function AdminUsersPage() {
       setNewUsername("");
       setNewEmail("");
       setNewPassword("");
-      setNewRole("viewer");
+      setNewRole("customer");
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to create user.");
@@ -130,7 +130,7 @@ export function AdminUsersPage() {
     }
   };
 
-  const handleQuickPromote = async (id: number, role: "admin" | "analyst" | "viewer") => {
+  const handleQuickPromote = async (id: number, role: "admin" | "customer") => {
     setSaving(true);
     try {
       await updateUser(id, { role });
@@ -190,11 +190,10 @@ export function AdminUsersPage() {
               <span className="mb-2 block text-sm text-muted">Role</span>
               <select
                 value={newRole}
-                onChange={(event) => setNewRole(event.target.value as "admin" | "analyst" | "viewer")}
+                onChange={(event) => setNewRole(event.target.value as "admin" | "customer")}
                 className="w-full rounded-xl border border-white/15 bg-[#0c152d]/80 px-3 py-3 text-sm text-text outline-none transition focus:border-brand/70 focus:ring-2 focus:ring-brand/20"
               >
-                <option value="viewer">viewer</option>
-                <option value="analyst">analyst</option>
+                <option value="customer">customer</option>
                 <option value="admin">admin</option>
               </select>
             </label>
@@ -256,8 +255,7 @@ export function AdminUsersPage() {
                       setCurrentRoles([]);
                     }}>Select</Button>
                     <Button size="sm" variant="outline" onClick={() => handleQuickPromote(user.id, "admin")}>Make admin</Button>
-                    <Button size="sm" variant="outline" onClick={() => handleQuickPromote(user.id, "analyst")}>Make analyst</Button>
-                    <Button size="sm" variant="outline" onClick={() => handleQuickPromote(user.id, "viewer")}>Make viewer</Button>
+                    <Button size="sm" variant="outline" onClick={() => handleQuickPromote(user.id, "customer")}>Make customer</Button>
                     <Button size="sm" variant="outline" onClick={() => handleDeleteUser(user.id)}>Delete</Button>
                   </div>
                 </div>

@@ -44,7 +44,7 @@ def _payload_from_record(record: TrafficRecord) -> dict:
 def ingest_traffic(
     payload: ICSTrafficIn,
     db: Session = Depends(get_db),
-    _user=Depends(require_roles(UserRole.admin, UserRole.analyst)),
+    _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> TrafficRecordResponse:
     record = TrafficRecord(
         source_ip=str(payload.source_ip),
@@ -74,7 +74,7 @@ def ingest_traffic(
 async def run_detection(
     record_id: int,
     db: Session = Depends(get_db),
-    _user=Depends(require_roles(UserRole.admin, UserRole.analyst)),
+    _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> DetectionResponse:
     record = db.query(TrafficRecord).filter(TrafficRecord.id == record_id).first()
     if not record:
@@ -120,7 +120,7 @@ async def run_detection(
 @router.get("/packets-by-hour", response_model=PacketsByHourResponse)
 def packets_by_hour(
     db: Session = Depends(get_db),
-    _user=Depends(require_roles(UserRole.admin, UserRole.analyst, UserRole.viewer)),
+    _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> PacketsByHourResponse:
     since = datetime.now(timezone.utc) - timedelta(hours=24)
     records = db.query(TrafficRecord).filter(TrafficRecord.created_at >= since).all()

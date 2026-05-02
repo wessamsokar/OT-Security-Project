@@ -27,7 +27,7 @@ def retrain_model(current_user: User = Depends(require_roles(UserRole.admin))) -
 @router.get("/versions", response_model=list[ModelVersionResponse])
 def list_versions(
     db: Session = Depends(get_db),
-    _user=Depends(require_roles(UserRole.admin, UserRole.analyst, UserRole.viewer)),
+    _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> list[ModelVersionResponse]:
     return db.query(ModelVersion).order_by(ModelVersion.created_at.desc()).all()
 
@@ -35,7 +35,7 @@ def list_versions(
 @router.get("/security-posture", response_model=SecurityPostureResponse)
 def security_posture(
     db: Session = Depends(get_db),
-    _user=Depends(require_roles(UserRole.admin, UserRole.analyst, UserRole.viewer)),
+    _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> SecurityPostureResponse:
     since = datetime.now(timezone.utc) - timedelta(hours=24)
 

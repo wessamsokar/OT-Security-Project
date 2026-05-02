@@ -2,7 +2,7 @@ import type { AuthApiResponse } from "../types/auth";
 
 const SESSION_KEY = "ot_sentinel_auth_session";
 
-export type UserRole = "admin" | "analyst" | "viewer";
+export type UserRole = "admin" | "customer";
 
 type AuthSession = {
   token: string;
@@ -66,7 +66,15 @@ export function clearAuthSession() {
 
 export function getUserRole(): UserRole | null {
   const session = getAuthSession();
-  return session?.user?.role ?? null;
+  const role = session?.user?.role;
+  if (role === "admin" || role === "customer") {
+    return role;
+  }
+  // Backward compatibility for older persisted sessions.
+  if (role === "analyst" || role === "viewer") {
+    return "customer";
+  }
+  return null;
 }
 
 export function hasRole(roles: UserRole | UserRole[]): boolean {

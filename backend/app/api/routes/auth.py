@@ -52,7 +52,7 @@ def register(
         username=full_name,
         email=email,
         hashed_password=get_password_hash(payload.password),
-        role=UserRole.viewer,
+        role=UserRole.customer,
         is_active=True,
         is_email_verified=False,
     )
@@ -113,22 +113,22 @@ def forgot_password(
 ) -> MessageResponse:
     email = payload.email.strip().lower()
     user = db.query(User).filter(func.lower(User.email) == email).first()
-    if user:
-        invalidate_user_tokens(db, user.id, AuthTokenType.password_reset)
-        token = create_user_token(
-            db,
-            user.id,
-            AuthTokenType.password_reset,
-            timedelta(minutes=settings.password_reset_token_expire_minutes),
-        )
-        db.commit()
-        background_tasks.add_task(send_password_reset_email, user.email, token)
-        return MessageResponse(
-            message="If the account exists, a reset link has been sent.",
-            token=token if (settings.expose_auth_tokens or settings.app_debug) else None,
-        )
+    if not user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email.")
 
-    return MessageResponse(message="If the account exists, a reset link has been sent.")
+    invalidate_user_tokens(db, user.id, AuthTokenType.password_reset)
+    token = create_user_token(
+        db,
+        user.id,
+        AuthTokenType.password_reset,
+        timedelta(minutes=settings.password_reset_token_expire_minutes),
+    )
+    db.commit()
+    background_tasks.add_task(send_password_reset_email, user.email, token)
+    return MessageResponse(
+        message="Reset link sent successfully.",
+        token=token if (settings.expose_auth_tokens or settings.app_debug) else None,
+    )
 
 
 @router.post("/reset-password", response_model=MessageResponse)

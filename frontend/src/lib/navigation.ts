@@ -28,13 +28,13 @@ export type NavSection = {
   items: NavItem[];
 };
 
-const ALL_ROLES: UserRole[] = ["admin", "analyst", "viewer"];
+const ALL_ROLES: UserRole[] = ["admin", "customer"];
 
 export const TOP_NAV_ITEMS: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", roles: ALL_ROLES },
   { to: "/dashboard/alerts", label: "Alerts", roles: ALL_ROLES },
   { to: "/dashboard/devices", label: "Devices", roles: ALL_ROLES },
-  { to: "/dashboard/demo", label: "Detection Demo", roles: ["admin", "analyst"] },
+  { to: "/dashboard/demo", label: "Detection Demo", roles: ["admin", "customer"] },
   { to: "/dashboard/admin/users", label: "Admin", roles: ["admin"] }
 ];
 
@@ -50,7 +50,7 @@ export const SIDEBAR_SECTIONS: NavSection[] = [
   {
     title: "Operations",
     items: [
-      { to: "/dashboard/network-graph", label: "Network Graph", icon: Network, roles: ["admin", "analyst"] },
+      { to: "/dashboard/network-graph", label: "Network Graph", icon: Network, roles: ["admin", "customer"] },
       { to: "/dashboard/devices", label: "Devices", icon: Activity, roles: ALL_ROLES },
       { to: "/dashboard/packets-analysed", label: "Packets Analysed", icon: BarChart3, roles: ALL_ROLES }
     ]
@@ -66,8 +66,8 @@ export const SIDEBAR_SECTIONS: NavSection[] = [
   {
     title: "Workflows",
     items: [
-      { to: "/dashboard/my-tasks", label: "My Tasks", icon: ListChecks, roles: ["admin", "analyst"] },
-      { to: "/dashboard/demo", label: "Detection Demo", icon: ShieldCheck, roles: ["admin", "analyst"] }
+      { to: "/dashboard/my-tasks", label: "My Tasks", icon: ListChecks, roles: ["admin", "customer"] },
+      { to: "/dashboard/demo", label: "Detection Demo", icon: ShieldCheck, roles: ["admin", "customer"] }
     ]
   },
   {
