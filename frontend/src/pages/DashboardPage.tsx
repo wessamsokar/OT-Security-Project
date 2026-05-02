@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { X } from "lucide-react";
 
 import { fetchAlerts, fetchDashboardSummary, type AlertResponse, type DashboardSummary } from "../api/alertsApi";
 import { fetchModelVersions } from "../api/modelApi";
@@ -42,6 +43,7 @@ export function DashboardPage() {
   const [mlConfidence, setMlConfidence] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [showWelcome, setShowWelcome] = useState(true);
 
   useEffect(() => {
     let active = true;
@@ -133,16 +135,34 @@ export function DashboardPage() {
 
   return (
     <section className="space-y-5 rounded-3xl border border-white/10 bg-panel/45 p-6 shadow-panel">
-      <div className="rounded-2xl border border-white/10 bg-gradient-to-r from-white/10 to-white/5 p-5">
-        <p className="text-xs uppercase tracking-[0.16em] text-brand">User Dashboard</p>
-        <h1 className="mt-2 text-2xl font-semibold text-white">Welcome back, {firstName}</h1>
-        <p className="mt-1 text-sm text-muted">Assigned SOC view with real-time alerts, traffic, tasks, and security posture.</p>
-      </div>
+      {showWelcome ? (
+        <div className="rounded-2xl border border-white/10 bg-gradient-to-r from-white/10 to-white/5 p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.16em] text-brand">User Dashboard</p>
+              <h1 className="mt-2 text-2xl font-semibold text-white">Welcome back, {firstName}</h1>
+              <p className="mt-1 text-sm text-muted">Assigned SOC view with real-time alerts, traffic, tasks, and security posture.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowWelcome(false)}
+              className="rounded-full border border-white/10 bg-white/5 p-1.5 text-muted transition hover:text-white"
+              aria-label="Hide welcome panel"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {loading ? <p className="text-sm text-muted">Loading dashboard data...</p> : null}
       {error ? <p className="text-sm text-danger">{error}</p> : null}
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+      <div
+        className={`grid grid-cols-1 gap-3 md:grid-cols-2 ${
+          showAdminInsights ? "xl:grid-cols-5" : "xl:grid-cols-3"
+        }`}
+      >
         <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <p className="text-xs uppercase tracking-wide text-muted">Packets Analysed</p>
           <p className="mt-2 text-3xl font-semibold text-white">{packetCount.toLocaleString()}</p>
@@ -198,25 +218,6 @@ export function DashboardPage() {
           </div>
         </article>
 
-        {showAdminInsights ? (
-          <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <h2 className="text-lg font-medium text-white">My Tasks</h2>
-            <div className="mt-3 space-y-2 text-sm">
-              <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                <p className="text-white">Investigate Modbus Injection on PLC-01</p>
-                <p className="mt-1 text-xs text-muted">SLA: 12m remaining</p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                <p className="text-white">Review replay anomaly at HMI-02</p>
-                <p className="mt-1 text-xs text-muted">SLA: 26m remaining</p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                <p className="text-white">Confirm whitelist for inventory scanner</p>
-                <p className="mt-1 text-xs text-muted">SLA: 41m remaining</p>
-              </div>
-            </div>
-          </article>
-        ) : null}
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">

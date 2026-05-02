@@ -6,12 +6,22 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import require_roles
+from app.core.config import get_settings
 from app.core.security import get_password_hash
 from app.db.session import get_db
+from app.models.alert import Alert, AlertSeverity
+from app.models.device import Device
+from app.models.incident import Incident
+from app.models.traffic_record import TrafficRecord
 from app.models.user import User, UserRole
+from app.schemas.alerts import ActiveThreatResponse, AlertResponse
+from app.schemas.devices import DeviceResponse
+from app.schemas.incidents import IncidentResponse
+from app.schemas.traffic import TrafficRecordResponse
 from app.schemas.users import UserAdminResponse, UserCreate, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["users"])
+settings = get_settings()
 
 
 @router.get("", response_model=list[UserAdminResponse])
@@ -22,6 +32,11 @@ def list_users(
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[UserAdminResponse]:
     query = db.query(User)
+    hidden_emails = [settings.bootstrap_admin_email]
+    hidden_emails.extend(settings.hidden_admin_emails_list)
+    hidden_emails = [email.lower() for email in hidden_emails if email]
+    if hidden_emails:
+        query = query.filter(func.lower(User.email).not_in(hidden_emails))
     if q:
         needle = f"%{q.strip().lower()}%"
         query = query.filter(
@@ -73,6 +88,116 @@ def get_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return user
+
+
+def _get_user_or_404(db: Session, user_id: int) -> User:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return user
+
+
+@router.get("/{user_id}/devices", response_model=list[DeviceResponse])
+def list_user_devices(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_roles(UserRole.admin)),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[DeviceResponse]:
+    _get_user_or_404(db, user_id)
+    return (
+        db.query(Device)
+        .filter(Device.user_id == user_id)
+        .order_by(Device.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+@router.get("/{user_id}/alerts", response_model=list[AlertResponse])
+def list_user_alerts(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_roles(UserRole.admin)),
+    limit: int = Query(default=200, ge=1, le=500),
+) -> list[AlertResponse]:
+    _get_user_or_404(db, user_id)
+    return (
+        db.query(Alert)
+        .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
+        .filter(TrafficRecord.user_id == user_id)
+        .order_by(Alert.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+@router.get("/{user_id}/threats", response_model=list[ActiveThreatResponse])
+def list_user_threats(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_roles(UserRole.admin)),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[ActiveThreatResponse]:
+    _get_user_or_404(db, user_id)
+    rows = (
+        db.query(Alert, TrafficRecord)
+        .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
+        .filter(TrafficRecord.user_id == user_id)
+        .filter(Alert.severity.in_([AlertSeverity.critical, AlertSeverity.high]))
+        .order_by(Alert.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    result: list[ActiveThreatResponse] = []
+    for alert, record in rows:
+        result.append(
+            ActiveThreatResponse(
+                threat_id=f"T-{alert.id}",
+                attack_vector=record.attack_class or alert.summary,
+                target_asset=record.destination_ip,
+                risk=alert.severity.value.upper(),
+                created_at=alert.created_at,
+            )
+        )
+    return result
+
+
+@router.get("/{user_id}/incidents", response_model=list[IncidentResponse])
+def list_user_incidents(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_roles(UserRole.admin)),
+    limit: int = Query(default=200, ge=1, le=500),
+) -> list[IncidentResponse]:
+    _get_user_or_404(db, user_id)
+    return (
+        db.query(Incident)
+        .join(Alert, Alert.id == Incident.alert_id)
+        .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
+        .filter(TrafficRecord.user_id == user_id)
+        .order_by(Incident.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+@router.get("/{user_id}/traffic", response_model=list[TrafficRecordResponse])
+def list_user_traffic(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_roles(UserRole.admin)),
+    limit: int = Query(default=200, ge=1, le=500),
+) -> list[TrafficRecordResponse]:
+    _get_user_or_404(db, user_id)
+    return (
+        db.query(TrafficRecord)
+        .filter(TrafficRecord.user_id == user_id)
+        .order_by(TrafficRecord.created_at.desc())
+        .limit(limit)
+        .all()
+    )
 
 
 @router.put("/{user_id}", response_model=UserAdminResponse)
@@ -146,6 +271,8 @@ def delete_user(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if settings.bootstrap_admin_email and user.email.lower() == settings.bootstrap_admin_email.lower():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Default admin cannot be deleted")
     if user.id == current_admin.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Admin cannot delete self")
     db.delete(user)

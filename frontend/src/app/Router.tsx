@@ -13,7 +13,6 @@ import { LiveSnapshotPage } from "../pages/LiveSnapshotPage";
 import { LoginPage } from "../pages/LoginPage";
 import { MlConfidencePage } from "../pages/MlConfidencePage";
 import { MttrPage } from "../pages/MttrPage";
-import { MyTasksPage } from "../pages/MyTasksPage";
 import { HomePage } from "../pages/HomePage";
 import { NetworkGraphPage } from "../pages/NetworkGraphPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
@@ -66,10 +65,38 @@ function AnimatedRoutes() {
       ),
       children: [
         { index: true, element: <DashboardPage /> },
-        { path: "network-graph", element: <NetworkGraphPage /> },
-        { path: "packets-analysed", element: <PacketsAnalysedPage /> },
-        { path: "alerts", element: <AlertsPage /> },
-        { path: "active-threats", element: <ActiveThreatsPage /> },
+        {
+          path: "network-graph",
+          element: (
+            <RoleRoute roles={["customer"]}>
+              <NetworkGraphPage />
+            </RoleRoute>
+          )
+        },
+        {
+          path: "packets-analysed",
+          element: (
+            <RoleRoute roles={["customer"]}>
+              <PacketsAnalysedPage />
+            </RoleRoute>
+          )
+        },
+        {
+          path: "alerts",
+          element: (
+            <RoleRoute roles={["customer"]}>
+              <AlertsPage />
+            </RoleRoute>
+          )
+        },
+        {
+          path: "active-threats",
+          element: (
+            <RoleRoute roles={["customer"]}>
+              <ActiveThreatsPage />
+            </RoleRoute>
+          )
+        },
         {
           path: "mttr",
           element: (
@@ -87,14 +114,6 @@ function AnimatedRoutes() {
           )
         },
         {
-          path: "my-tasks",
-          element: (
-            <RoleRoute roles={["admin"]}>
-              <MyTasksPage />
-            </RoleRoute>
-          )
-        },
-        {
           path: "security-posture",
           element: (
             <RoleRoute roles={["admin"]}>
@@ -102,7 +121,14 @@ function AnimatedRoutes() {
             </RoleRoute>
           )
         },
-        { path: "devices", element: <DevicesPage /> },
+        {
+          path: "devices",
+          element: (
+            <RoleRoute roles={["customer"]}>
+              <DevicesPage />
+            </RoleRoute>
+          )
+        },
         {
           path: "admin/users",
           element: (

@@ -39,6 +39,11 @@ export async function fetchDevices(): Promise<DeviceResponse[]> {
   return response.data;
 }
 
+export async function fetchMyDevices(): Promise<DeviceResponse[]> {
+  const response = await apiClient.get<DeviceResponse[]>("/v1/devices/me");
+  return response.data;
+}
+
 export async function createDevice(payload: DeviceCreate): Promise<DeviceResponse> {
   const response = await apiClient.post<DeviceResponse>("/v1/devices", payload);
   return response.data;

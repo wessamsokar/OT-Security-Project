@@ -6,7 +6,6 @@ import {
   Bell,
   BrainCircuit,
   Clock3,
-  ListChecks,
   Network,
   Settings2,
   Shield,
@@ -32,9 +31,10 @@ const ALL_ROLES: UserRole[] = ["admin", "customer"];
 
 export const TOP_NAV_ITEMS: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", roles: ALL_ROLES },
-  { to: "/dashboard/alerts", label: "Alerts", roles: ALL_ROLES },
-  { to: "/dashboard/devices", label: "Devices", roles: ALL_ROLES },
-  { to: "/dashboard/admin/users", label: "Admin", roles: ["admin"] }
+  { to: "/dashboard/alerts", label: "Alerts", roles: ["customer"] },
+  { to: "/dashboard/devices", label: "Devices", roles: ["customer"] },
+  { to: "/dashboard/admin/users", label: "Users", roles: ["admin"] },
+  { to: "/dashboard/admin/roles", label: "Roles", roles: ["admin"] }
 ];
 
 export const SIDEBAR_SECTIONS: NavSection[] = [
@@ -42,16 +42,16 @@ export const SIDEBAR_SECTIONS: NavSection[] = [
     title: "Overview",
     items: [
       { to: "/dashboard", label: "Dashboard", icon: ShieldCheck, roles: ALL_ROLES },
-      { to: "/dashboard/active-threats", label: "Active Threats", icon: AlertTriangle, roles: ALL_ROLES },
-      { to: "/dashboard/alerts", label: "Alerts", icon: Bell, roles: ALL_ROLES }
+      { to: "/dashboard/active-threats", label: "Active Threats", icon: AlertTriangle, roles: ["customer"] },
+      { to: "/dashboard/alerts", label: "Alerts", icon: Bell, roles: ["customer"] }
     ]
   },
   {
     title: "Operations",
     items: [
-      { to: "/dashboard/network-graph", label: "Network Graph", icon: Network, roles: ["admin", "customer"] },
-      { to: "/dashboard/devices", label: "Devices", icon: Activity, roles: ALL_ROLES },
-      { to: "/dashboard/packets-analysed", label: "Packets Analysed", icon: BarChart3, roles: ALL_ROLES }
+      { to: "/dashboard/network-graph", label: "Network Graph", icon: Network, roles: ["customer"] },
+      { to: "/dashboard/devices", label: "Devices", icon: Activity, roles: ["customer"] },
+      { to: "/dashboard/packets-analysed", label: "Packets Analysed", icon: BarChart3, roles: ["customer"] }
     ]
   },
   {
@@ -60,12 +60,6 @@ export const SIDEBAR_SECTIONS: NavSection[] = [
       { to: "/dashboard/mttr", label: "MTTR", icon: Clock3, roles: ["admin"] },
       { to: "/dashboard/ml-confidence", label: "ML Confidence", icon: BrainCircuit, roles: ["admin"] },
       { to: "/dashboard/security-posture", label: "Security Posture", icon: Shield, roles: ["admin"] }
-    ]
-  },
-  {
-    title: "Workflows",
-    items: [
-      { to: "/dashboard/my-tasks", label: "My Tasks", icon: ListChecks, roles: ["admin"] },
     ]
   },
   {

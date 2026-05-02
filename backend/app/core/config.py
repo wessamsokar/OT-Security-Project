@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     bootstrap_admin_email: str = ""
     bootstrap_admin_password: str = ""
     bootstrap_admin_name: str = ""
+    hidden_admin_emails: str = ""
 
     email_enabled: bool = False
     smtp_host: str = ""
@@ -48,6 +49,10 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
+
+    @property
+    def hidden_admin_emails_list(self) -> list[str]:
+        return [item.strip().lower() for item in self.hidden_admin_emails.split(",") if item.strip()]
 
     class Config:
         env_file = (".env", ".env.example")

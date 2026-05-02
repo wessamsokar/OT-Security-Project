@@ -1,23 +1,75 @@
 import { motion } from "framer-motion";
+import { useEffect, useMemo, useState } from "react";
 
-const nodes = [
-  { id: "plc-a", label: "PLC-A", x: 120, y: 120, status: "online" },
-  { id: "plc-b", label: "PLC-B", x: 300, y: 90, status: "online" },
-  { id: "rtu-1", label: "RTU-1", x: 460, y: 170, status: "online" },
-  { id: "scada", label: "SCADA", x: 320, y: 250, status: "online" },
-  { id: "hmi-1", label: "HMI-1", x: 170, y: 250, status: "warning" }
-] as const;
+import { fetchMyDevices, type DeviceResponse } from "../api/devicesApi";
 
-const links = [
-  ["plc-a", "plc-b"],
-  ["plc-b", "rtu-1"],
-  ["plc-a", "scada"],
-  ["scada", "hmi-1"],
-  ["plc-b", "scada"]
-] as const;
+type GraphNode = {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  status: "online" | "warning";
+};
+
+type GraphLink = [string, string];
+
+function buildGraph(devices: DeviceResponse[]): { nodes: GraphNode[]; links: GraphLink[] } {
+  const cols = 4;
+  const gapX = 140;
+  const gapY = 90;
+  const startX = 90;
+  const startY = 80;
+
+  const nodes = devices.map((device, index) => {
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    return {
+      id: `device-${device.id}`,
+      label: device.name,
+      x: startX + col * gapX,
+      y: startY + row * gapY,
+      status: device.is_active ? "online" : "warning"
+    };
+  });
+
+  const links: GraphLink[] = [];
+  for (let i = 0; i < nodes.length - 1; i += 1) {
+    links.push([nodes[i].id, nodes[i + 1].id]);
+  }
+
+  return { nodes, links };
+}
 
 export function NetworkGraphPage() {
-  const map = new Map(nodes.map((n) => [n.id, n]));
+  const [devices, setDevices] = useState<DeviceResponse[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    const load = async () => {
+      try {
+        const rows = await fetchMyDevices();
+        if (!active) return;
+        setDevices(rows);
+        setError("");
+      } catch (err) {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : "Unable to load devices.");
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    void load();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const { nodes, links } = useMemo(() => buildGraph(devices), [devices]);
+  const map = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
   return (
     <section className="rounded-3xl border border-white/10 bg-panel/45 p-6 shadow-panel">
@@ -28,6 +80,11 @@ export function NetworkGraphPage() {
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#0c1630] p-3">
+        {loading ? <p className="text-sm text-muted">Loading devices...</p> : null}
+        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        {!loading && !error && !nodes.length ? (
+          <p className="text-sm text-muted">No devices found for this user.</p>
+        ) : null}
         <svg viewBox="0 0 600 340" className="h-[340px] w-full">
           <defs>
             <linearGradient id="lineGlow" x1="0%" y1="0%" x2="100%" y2="0%">
