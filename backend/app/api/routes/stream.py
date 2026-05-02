@@ -92,7 +92,12 @@ def _validate_stream_token(token: str) -> None:
         user = db.query(User).filter(User.username == payload["sub"]).first()
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-        if user.role not in {UserRole.admin, UserRole.analyst, UserRole.viewer}:
+        allowed = {UserRole.admin.value, UserRole.analyst.value, UserRole.viewer.value}
+        user_roles = {user.role.value if user.role else None}
+        if getattr(user, "roles", None):
+            user_roles.update({role.name for role in user.roles if role and role.name})
+
+        if not {role for role in user_roles if role}.intersection(allowed):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
     finally:
         db.close()

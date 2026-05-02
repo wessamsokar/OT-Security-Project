@@ -20,9 +20,23 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_
     return user
 
 
-def require_roles(*roles: UserRole):
+def _normalize_role(role: UserRole | str) -> str:
+    if isinstance(role, UserRole):
+        return role.value
+    return str(role)
+
+
+def require_roles(*roles: UserRole | str):
+    allowed = { _normalize_role(role).lower() for role in roles }
+
     def validator(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role not in roles:
+        user_roles = set()
+        if current_user.role:
+            user_roles.add(_normalize_role(current_user.role).lower())
+        if getattr(current_user, "roles", None):
+            user_roles.update({role.name.lower() for role in current_user.roles if role and role.name})
+
+        if user_roles.isdisjoint(allowed):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
         return current_user
 

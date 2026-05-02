@@ -45,3 +45,9 @@ class MttrSummaryResponse(BaseModel):
     average_mttr_minutes: int
     target_sla_minutes: int
     incidents: list[MttrIncidentResponse]
+
+
+class PublicLiveSnapshotResponse(BaseModel):
+    dashboard: DashboardSummary
+    active_threats: list[ActiveThreatResponse]
+    updated_at: datetime

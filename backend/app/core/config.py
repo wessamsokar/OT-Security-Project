@@ -17,8 +17,33 @@ class Settings(BaseSettings):
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60
+    password_reset_token_expire_minutes: int = 30
+    email_verification_token_expire_hours: int = 24
+    email_verification_required: bool = False
+    expose_auth_tokens: bool = False
+
+    bootstrap_admin_enabled: bool = False
+    bootstrap_admin_email: str = ""
+    bootstrap_admin_password: str = ""
+    bootstrap_admin_name: str = ""
+
+    email_enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = True
+    smtp_use_ssl: bool = False
+    smtp_timeout_seconds: int = 15
+    smtp_from_email: str = ""
+    smtp_from_name: str = "ICS Guard"
+    frontend_base_url: str = ""
+    email_verification_path: str = "/verify-email"
+    password_reset_path: str = "/reset-password"
 
     rate_limit_per_minute: int = 120
+
+    packet_capture_dir: str = "./captures"
 
     @property
     def cors_origins_list(self) -> list[str]:
