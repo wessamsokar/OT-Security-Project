@@ -20,7 +20,7 @@ function getUserDisplayName() {
     return `${parts[0]} Analyst`;
   }
 
-  return "Security Analyst llll";
+  return "Security Analyst";
 }
 
 type NavbarProps = {
