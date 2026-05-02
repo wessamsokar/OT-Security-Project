@@ -9,7 +9,7 @@ from app.db.session import get_db
 from app.models.alert import Alert, AlertSeverity
 from app.models.incident import Incident, IncidentStatus
 from app.models.traffic_record import TrafficRecord
-from app.models.user import UserRole
+from app.models.user import User, UserRole
 from app.schemas.alerts import (
     ActiveThreatResponse,
     AlertResponse,
@@ -21,32 +21,53 @@ from app.schemas.alerts import (
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
 
+def _is_admin(user: User) -> bool:
+    return bool(user.role and user.role.value == UserRole.admin.value)
+
+
 @router.get("", response_model=list[AlertResponse])
 def list_alerts(
     db: Session = Depends(get_db),
-    _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
+    current_user: User = Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> list[AlertResponse]:
-    return db.query(Alert).order_by(Alert.created_at.desc()).limit(200).all()
+    query = db.query(Alert).join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
+    if not _is_admin(current_user):
+        query = query.filter(TrafficRecord.user_id == current_user.id)
+    return query.order_by(Alert.created_at.desc()).limit(200).all()
 
 
 @router.get("/dashboard", response_model=DashboardSummary)
 def dashboard(
     db: Session = Depends(get_db),
-    _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
+    current_user: User = Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> DashboardSummary:
-    total_records = db.query(func.count(TrafficRecord.id)).scalar() or 0
-    total_alerts = db.query(func.count(Alert.id)).scalar() or 0
-    incidents_open = (
-        db.query(func.count(Incident.id)).filter(Incident.status != IncidentStatus.resolved).scalar() or 0
+    records_query = db.query(TrafficRecord)
+    alerts_query = db.query(Alert).join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
+    incidents_query = (
+        db.query(Incident)
+        .join(Alert, Alert.id == Incident.alert_id)
+        .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
+        .filter(Incident.status != IncidentStatus.resolved)
     )
-    avg_risk = db.query(func.avg(TrafficRecord.risk_score)).scalar() or 0.0
+    avg_query = db.query(func.avg(TrafficRecord.risk_score))
 
-    class_rows = (
-        db.query(TrafficRecord.attack_class, func.count(TrafficRecord.id))
-        .filter(TrafficRecord.attack_class.isnot(None))
-        .group_by(TrafficRecord.attack_class)
-        .all()
+    if not _is_admin(current_user):
+        records_query = records_query.filter(TrafficRecord.user_id == current_user.id)
+        alerts_query = alerts_query.filter(TrafficRecord.user_id == current_user.id)
+        incidents_query = incidents_query.filter(TrafficRecord.user_id == current_user.id)
+        avg_query = avg_query.filter(TrafficRecord.user_id == current_user.id)
+
+    total_records = records_query.with_entities(func.count(TrafficRecord.id)).scalar() or 0
+    total_alerts = alerts_query.with_entities(func.count(Alert.id)).scalar() or 0
+    incidents_open = incidents_query.with_entities(func.count(Incident.id)).scalar() or 0
+    avg_risk = avg_query.scalar() or 0.0
+
+    class_query = db.query(TrafficRecord.attack_class, func.count(TrafficRecord.id)).filter(
+        TrafficRecord.attack_class.isnot(None)
     )
+    if not _is_admin(current_user):
+        class_query = class_query.filter(TrafficRecord.user_id == current_user.id)
+    class_rows = class_query.group_by(TrafficRecord.attack_class).all()
 
     return DashboardSummary(
         total_records=total_records,
@@ -60,16 +81,16 @@ def dashboard(
 @router.get("/active-threats", response_model=list[ActiveThreatResponse])
 def active_threats(
     db: Session = Depends(get_db),
-    _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
+    current_user: User = Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> list[ActiveThreatResponse]:
-    rows = (
+    rows_query = (
         db.query(Alert, TrafficRecord)
         .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
         .filter(Alert.severity.in_([AlertSeverity.critical, AlertSeverity.high]))
-        .order_by(Alert.created_at.desc())
-        .limit(100)
-        .all()
     )
+    if not _is_admin(current_user):
+        rows_query = rows_query.filter(TrafficRecord.user_id == current_user.id)
+    rows = rows_query.order_by(Alert.created_at.desc()).limit(100).all()
 
     result: list[ActiveThreatResponse] = []
     for alert, record in rows:
@@ -88,9 +109,16 @@ def active_threats(
 @router.get("/mttr", response_model=MttrSummaryResponse)
 def mttr_summary(
     db: Session = Depends(get_db),
-    _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
+    current_user: User = Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> MttrSummaryResponse:
-    incidents = db.query(Incident).order_by(Incident.created_at.desc()).limit(50).all()
+    incidents_query = (
+        db.query(Incident)
+        .join(Alert, Alert.id == Incident.alert_id)
+        .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
+    )
+    if not _is_admin(current_user):
+        incidents_query = incidents_query.filter(TrafficRecord.user_id == current_user.id)
+    incidents = incidents_query.order_by(Incident.created_at.desc()).limit(50).all()
     now = datetime.now(timezone.utc)
 
     items: list[MttrIncidentResponse] = []

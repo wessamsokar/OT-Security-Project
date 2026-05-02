@@ -43,6 +43,7 @@ function parseMetadata(raw: string): Record<string, unknown> | null {
 export function DevicesPage() {
   const [devices, setDevices] = useState<DeviceResponse[]>([]);
   const [form, setForm] = useState<DeviceFormState>(emptyForm);
+  const [showFormModal, setShowFormModal] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -118,6 +119,7 @@ export function DevicesPage() {
 
       setForm(emptyForm);
       setEditingId(null);
+      setShowFormModal(false);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Unable to save device.");
     } finally {
@@ -127,6 +129,7 @@ export function DevicesPage() {
 
   const handleEdit = (device: DeviceResponse) => {
     setEditingId(device.id);
+    setFormError("");
     setForm({
       name: device.name ?? "",
       deviceType: device.device_type ?? "",
@@ -136,6 +139,7 @@ export function DevicesPage() {
       metadataJson: JSON.stringify(device.metadata_json ?? {}, null, 2),
       isActive: device.is_active
     });
+    setShowFormModal(true);
   };
 
   const handleDelete = async (deviceId: number) => {
@@ -152,91 +156,26 @@ export function DevicesPage() {
 
   return (
     <section className="rounded-3xl border border-white/10 bg-panel/45 p-6 shadow-panel">
-      <div className="mb-6">
-        <p className="text-xs uppercase tracking-[0.16em] text-brand">Devices</p>
-        <h1 className="mt-2 text-2xl font-semibold text-white">Device Inventory</h1>
-        <p className="mt-1 text-sm text-muted">Manage the OT devices assigned to your workspace.</p>
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-[0.16em] text-brand">Devices</p>
+          <h1 className="mt-2 text-2xl font-semibold text-white">Device Inventory</h1>
+          <p className="mt-1 text-sm text-muted">Manage the OT devices assigned to your workspace.</p>
+        </div>
+        <Button
+          onClick={() => {
+            setEditingId(null);
+            setForm(emptyForm);
+            setFormError("");
+            setShowFormModal(true);
+          }}
+        >
+          Add device
+        </Button>
       </div>
 
       {loading ? <p className="text-sm text-muted">Loading devices...</p> : null}
       {error ? <p className="text-sm text-danger">{error}</p> : null}
-
-      <div className="mb-6 grid grid-cols-1 gap-4 rounded-2xl border border-white/10 bg-white/5 p-4 md:grid-cols-2">
-        <div className="space-y-3">
-          <InputField
-            id="device-name"
-            label="Device name"
-            value={form.name}
-            onChange={(value) => setForm((prev) => ({ ...prev, name: value }))}
-            placeholder="PLC-01"
-          />
-          <InputField
-            id="device-type"
-            label="Device type"
-            value={form.deviceType}
-            onChange={(value) => setForm((prev) => ({ ...prev, deviceType: value }))}
-            placeholder="PLC, RTU, HMI"
-          />
-          <InputField
-            id="device-ip"
-            label="IP address"
-            value={form.ipAddress}
-            onChange={(value) => setForm((prev) => ({ ...prev, ipAddress: value }))}
-            placeholder="10.0.1.12"
-          />
-          <InputField
-            id="device-serial"
-            label="Serial number"
-            value={form.serialNumber}
-            onChange={(value) => setForm((prev) => ({ ...prev, serialNumber: value }))}
-            placeholder="SN-4829"
-          />
-          <InputField
-            id="device-location"
-            label="Location"
-            value={form.location}
-            onChange={(value) => setForm((prev) => ({ ...prev, location: value }))}
-            placeholder="Plant A - Line 3"
-          />
-        </div>
-        <div className="space-y-3">
-          <label className="block">
-            <span className="mb-2 block text-sm text-muted">Metadata (JSON)</span>
-            <textarea
-              rows={8}
-              value={form.metadataJson}
-              onChange={(event) => setForm((prev) => ({ ...prev, metadataJson: event.target.value }))}
-              className="w-full rounded-xl border border-white/15 bg-[#0c152d]/80 px-3 py-3 text-sm text-text outline-none transition placeholder:text-muted/70 focus:border-brand/70 focus:ring-2 focus:ring-brand/20"
-            />
-          </label>
-          <label className="flex items-center gap-2 text-sm text-muted">
-            <input
-              type="checkbox"
-              checked={form.isActive}
-              onChange={(event) => setForm((prev) => ({ ...prev, isActive: event.target.checked }))}
-              className="h-4 w-4 rounded border-white/20 bg-white/10 text-brand"
-            />
-            Active device
-          </label>
-          {formError ? <p className="text-sm text-danger">{formError}</p> : null}
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={handleSubmit} loading={saving}>
-              {isEditing ? "Update device" : "Add device"}
-            </Button>
-            {isEditing ? (
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setEditingId(null);
-                  setForm(emptyForm);
-                }}
-              >
-                Cancel
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      </div>
 
       <div className="overflow-x-auto rounded-2xl border border-white/10">
         <table className="min-w-full text-left text-sm">
@@ -291,6 +230,104 @@ export function DevicesPage() {
           </tbody>
         </table>
       </div>
+
+      {showFormModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-3xl rounded-2xl border border-white/10 bg-[#0d1732] p-4 shadow-panel md:p-6">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-white">{isEditing ? "Edit device" : "Add device"}</h2>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setShowFormModal(false);
+                  setFormError("");
+                  if (!isEditing) {
+                    setForm(emptyForm);
+                  }
+                }}
+              >
+                Close
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="space-y-3">
+                <InputField
+                  id="device-name"
+                  label="Device name"
+                  value={form.name}
+                  onChange={(value) => setForm((prev) => ({ ...prev, name: value }))}
+                  placeholder="PLC-01"
+                />
+                <InputField
+                  id="device-type"
+                  label="Device type"
+                  value={form.deviceType}
+                  onChange={(value) => setForm((prev) => ({ ...prev, deviceType: value }))}
+                  placeholder="PLC, RTU, HMI"
+                />
+                <InputField
+                  id="device-ip"
+                  label="IP address"
+                  value={form.ipAddress}
+                  onChange={(value) => setForm((prev) => ({ ...prev, ipAddress: value }))}
+                  placeholder="10.0.1.12"
+                />
+                <InputField
+                  id="device-serial"
+                  label="Serial number"
+                  value={form.serialNumber}
+                  onChange={(value) => setForm((prev) => ({ ...prev, serialNumber: value }))}
+                  placeholder="SN-4829"
+                />
+                <InputField
+                  id="device-location"
+                  label="Location"
+                  value={form.location}
+                  onChange={(value) => setForm((prev) => ({ ...prev, location: value }))}
+                  placeholder="Plant A - Line 3"
+                />
+              </div>
+              <div className="space-y-3">
+                <label className="block">
+                  <span className="mb-2 block text-sm text-muted">Metadata (JSON)</span>
+                  <textarea
+                    rows={8}
+                    value={form.metadataJson}
+                    onChange={(event) => setForm((prev) => ({ ...prev, metadataJson: event.target.value }))}
+                    className="w-full rounded-xl border border-white/15 bg-[#0c152d]/80 px-3 py-3 text-sm text-text outline-none transition placeholder:text-muted/70 focus:border-brand/70 focus:ring-2 focus:ring-brand/20"
+                  />
+                </label>
+                <label className="flex items-center gap-2 text-sm text-muted">
+                  <input
+                    type="checkbox"
+                    checked={form.isActive}
+                    onChange={(event) => setForm((prev) => ({ ...prev, isActive: event.target.checked }))}
+                    className="h-4 w-4 rounded border-white/20 bg-white/10 text-brand"
+                  />
+                  Active device
+                </label>
+                {formError ? <p className="text-sm text-danger">{formError}</p> : null}
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={handleSubmit} loading={saving}>
+                    {isEditing ? "Update device" : "Add device"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setShowFormModal(false);
+                      setFormError("");
+                      setEditingId(null);
+                      setForm(emptyForm);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

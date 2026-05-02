@@ -23,6 +23,10 @@ from app.db.session import get_db
 router = APIRouter(prefix="/traffic", tags=["traffic"])
 
 
+def _is_admin(user) -> bool:
+    return bool(user.role and user.role.value == UserRole.admin.value)
+
+
 def _payload_from_record(record: TrafficRecord) -> dict:
     return {
         "packet_count": record.packet_count,
@@ -44,9 +48,10 @@ def _payload_from_record(record: TrafficRecord) -> dict:
 def ingest_traffic(
     payload: ICSTrafficIn,
     db: Session = Depends(get_db),
-    _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
+    current_user=Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> TrafficRecordResponse:
     record = TrafficRecord(
+        user_id=current_user.id,
         source_ip=str(payload.source_ip),
         destination_ip=str(payload.destination_ip),
         source_port=payload.source_port,
@@ -74,9 +79,12 @@ def ingest_traffic(
 async def run_detection(
     record_id: int,
     db: Session = Depends(get_db),
-    _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
+    current_user=Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> DetectionResponse:
-    record = db.query(TrafficRecord).filter(TrafficRecord.id == record_id).first()
+    query = db.query(TrafficRecord).filter(TrafficRecord.id == record_id)
+    if not _is_admin(current_user):
+        query = query.filter(TrafficRecord.user_id == current_user.id)
+    record = query.first()
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
 
@@ -120,10 +128,13 @@ async def run_detection(
 @router.get("/packets-by-hour", response_model=PacketsByHourResponse)
 def packets_by_hour(
     db: Session = Depends(get_db),
-    _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
+    current_user=Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> PacketsByHourResponse:
     since = datetime.now(timezone.utc) - timedelta(hours=24)
-    records = db.query(TrafficRecord).filter(TrafficRecord.created_at >= since).all()
+    query = db.query(TrafficRecord).filter(TrafficRecord.created_at >= since)
+    if not _is_admin(current_user):
+        query = query.filter(TrafficRecord.user_id == current_user.id)
+    records = query.all()
 
     per_hour_packets: dict[str, int] = defaultdict(int)
     per_hour_protocols: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))

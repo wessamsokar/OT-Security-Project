@@ -18,6 +18,10 @@ router = APIRouter(prefix="/model", tags=["model"])
 SERVICE_STARTED_AT = datetime.now(timezone.utc)
 
 
+def _is_admin(user: User) -> bool:
+    return bool(user.role and user.role.value == UserRole.admin.value)
+
+
 @router.post("/retrain", response_model=RetrainResponse)
 def retrain_model(current_user: User = Depends(require_roles(UserRole.admin))) -> RetrainResponse:
     task = retrain_model_task.delay(triggered_by=current_user.username)
@@ -35,22 +39,28 @@ def list_versions(
 @router.get("/security-posture", response_model=SecurityPostureResponse)
 def security_posture(
     db: Session = Depends(get_db),
-    _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
+    current_user: User = Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> SecurityPostureResponse:
     since = datetime.now(timezone.utc) - timedelta(hours=24)
 
-    blocked_ips_today = (
+    blocked_query = (
         db.query(func.count(func.distinct(TrafficRecord.source_ip)))
         .join(Alert, Alert.traffic_record_id == TrafficRecord.id)
         .filter(Alert.severity.in_([AlertSeverity.high, AlertSeverity.critical]))
         .filter(Alert.created_at >= since)
-        .scalar()
-        or 0
     )
+    incidents_query = db.query(func.count(Incident.id)).filter(Incident.status != IncidentStatus.resolved)
+    if not _is_admin(current_user):
+        blocked_query = blocked_query.filter(TrafficRecord.user_id == current_user.id)
+        incidents_query = (
+            incidents_query.join(Alert, Alert.id == Incident.alert_id)
+            .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
+            .filter(TrafficRecord.user_id == current_user.id)
+        )
 
-    incidents_open = (
-        db.query(func.count(Incident.id)).filter(Incident.status != IncidentStatus.resolved).scalar() or 0
-    )
+    blocked_ips_today = blocked_query.scalar() or 0
+
+    incidents_open = incidents_query.scalar() or 0
 
     active_model = (
         db.query(ModelVersion)

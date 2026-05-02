@@ -10,6 +10,7 @@ class TrafficRecord(Base):
     __tablename__ = "traffic_records"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     source_ip: Mapped[str] = mapped_column(String(64), nullable=False)
     destination_ip: Mapped[str] = mapped_column(String(64), nullable=False)
     source_port: Mapped[int] = mapped_column(Integer, nullable=False)

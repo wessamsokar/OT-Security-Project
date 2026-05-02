@@ -10,6 +10,7 @@ from app.models.user import User, UserRole
 def main() -> None:
     db = SessionLocal()
     try:
+        admin_user = db.query(User).filter(User.username == "admin").first()
         if db.query(User).count() == 0:
             db.add_all(
                 [
@@ -27,9 +28,12 @@ def main() -> None:
                     ),
                 ]
             )
+            db.flush()
+            admin_user = db.query(User).filter(User.username == "admin").first()
 
         if db.query(TrafficRecord).count() == 0:
             record = TrafficRecord(
+                user_id=admin_user.id if admin_user else None,
                 source_ip="10.10.1.5",
                 destination_ip="10.10.1.25",
                 source_port=50011,

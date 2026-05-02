@@ -39,24 +39,37 @@ def _serialize_alert(alert: Alert) -> dict:
     }
 
 
-def _build_snapshot() -> dict:
+def _build_snapshot(user: User) -> dict:
     db = SessionLocal()
     try:
-        alerts = db.query(Alert).order_by(Alert.created_at.desc()).limit(20).all()
-
-        total_records = db.query(func.count(TrafficRecord.id)).scalar() or 0
-        total_alerts = db.query(func.count(Alert.id)).scalar() or 0
-        incidents_open = (
-            db.query(func.count(Incident.id)).filter(Incident.status != IncidentStatus.resolved).scalar() or 0
+        is_admin = bool(user.role and user.role.value == UserRole.admin.value)
+        alerts_query = db.query(Alert).join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
+        records_query = db.query(TrafficRecord)
+        incidents_query = db.query(Incident).filter(Incident.status != IncidentStatus.resolved)
+        avg_query = db.query(func.avg(TrafficRecord.risk_score))
+        class_query = db.query(TrafficRecord.attack_class, func.count(TrafficRecord.id)).filter(
+            TrafficRecord.attack_class.isnot(None)
         )
-        avg_risk = db.query(func.avg(TrafficRecord.risk_score)).scalar() or 0.0
 
-        class_rows = (
-            db.query(TrafficRecord.attack_class, func.count(TrafficRecord.id))
-            .filter(TrafficRecord.attack_class.isnot(None))
-            .group_by(TrafficRecord.attack_class)
-            .all()
-        )
+        if not is_admin:
+            alerts_query = alerts_query.filter(TrafficRecord.user_id == user.id)
+            records_query = records_query.filter(TrafficRecord.user_id == user.id)
+            incidents_query = (
+                incidents_query.join(Alert, Alert.id == Incident.alert_id)
+                .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
+                .filter(TrafficRecord.user_id == user.id)
+            )
+            avg_query = avg_query.filter(TrafficRecord.user_id == user.id)
+            class_query = class_query.filter(TrafficRecord.user_id == user.id)
+
+        alerts = alerts_query.order_by(Alert.created_at.desc()).limit(20).all()
+
+        total_records = records_query.with_entities(func.count(TrafficRecord.id)).scalar() or 0
+        total_alerts = alerts_query.with_entities(func.count(Alert.id)).scalar() or 0
+        incidents_open = incidents_query.with_entities(func.count(Incident.id)).scalar() or 0
+        avg_risk = avg_query.scalar() or 0.0
+
+        class_rows = class_query.group_by(TrafficRecord.attack_class).all()
 
         active_model = (
             db.query(ModelVersion)
@@ -82,7 +95,7 @@ def _build_snapshot() -> dict:
         db.close()
 
 
-def _validate_stream_token(token: str) -> None:
+def _validate_stream_token(token: str) -> User:
     payload = decode_token(token)
     if not payload or "sub" not in payload:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
@@ -104,20 +117,21 @@ def _validate_stream_token(token: str) -> None:
 
         if not {role for role in user_roles if role}.intersection(allowed):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+        return user
     finally:
         db.close()
 
 
 @router.get("/alerts")
 async def alerts_stream(request: Request, token: str = Query(..., min_length=8)) -> StreamingResponse:
-    _validate_stream_token(token)
+    user = _validate_stream_token(token)
 
     async def event_generator() -> Generator[str, None, None]:
         while True:
             if await request.is_disconnected():
                 break
 
-            snapshot = _build_snapshot()
+            snapshot = _build_snapshot(user)
             yield f"event: snapshot\ndata: {json.dumps(snapshot)}\n\n"
             await asyncio.sleep(5)
 
