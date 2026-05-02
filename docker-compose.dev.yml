@@ -1,4 +1,37 @@
 services:
+
+  # ─── Frontend PRODUCTION placeholder (dev mode) ───────────────────────────
+  # The real frontend in dev is served by frontend-dev (Vite HMR).
+  # This lightweight container exists only to satisfy gateway's depends_on.
+  # nginx.dev.conf already routes / → frontend-dev:5173, NOT here.
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+
+  # ─── Backend (hot-reload) ───────────────────────────────────────────────────
+  backend:
+    environment:
+      WATCHFILES_FORCE_POLLING: "true"
+    volumes:
+      - ./backend:/app          # Mount live code into container
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --reload-dir /app/app
+
+  # ─── Backend Worker (hot-reload) ────────────────────────────────────────────
+  backend-worker:
+    volumes:
+      - ./backend:/app
+    command: >
+      celery -A app.tasks.celery_app.celery_app worker
+      --loglevel=info
+      --autoscale=2,1
+
+  # ─── Frontend (Vite HMR dev server) ─────────────────────────────────────────
   frontend-dev:
     image: node:20-alpine
     container_name: ics-frontend-dev
@@ -16,6 +49,7 @@ services:
     networks:
       - ics_net
 
+  # ─── Gateway (dev nginx — proxies /api → backend, / → Vite HMR) ─────────────
   gateway:
     volumes:
       - ./gateway/nginx.dev.conf:/etc/nginx/nginx.conf:ro

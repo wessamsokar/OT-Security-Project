@@ -42,3 +42,89 @@ Authorization: Bearer {{token}}
 ### Retrain Model
 POST http://localhost:8080/api/v1/model/retrain
 Authorization: Bearer {{token}}
+
+### Register
+POST http://localhost:8080/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "full_name": "Test User",
+  "email": "testuser@example.com",
+  "password": "Password123!"
+}
+
+### Forgot Password
+POST http://localhost:8080/api/v1/auth/forgot-password
+Content-Type: application/json
+
+{
+  "email": "testuser@example.com"
+}
+
+### Reset Password
+POST http://localhost:8080/api/v1/auth/reset-password
+Content-Type: application/json
+
+{
+  "token": "REPLACE_WITH_RESET_TOKEN",
+  "new_password": "NewPassword123!"
+}
+
+### Request Email Verification
+POST http://localhost:8080/api/v1/auth/request-email-verification
+Authorization: Bearer {{token}}
+
+### Verify Email
+POST http://localhost:8080/api/v1/auth/verify-email
+Content-Type: application/json
+
+{
+  "token": "REPLACE_WITH_VERIFY_TOKEN"
+}
+
+### List Roles
+GET http://localhost:8080/api/v1/rbac/roles
+Authorization: Bearer {{token}}
+
+### Create Role
+POST http://localhost:8080/api/v1/rbac/roles
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "operator",
+  "description": "General operator role",
+  "permission_ids": []
+}
+
+### List Permissions
+GET http://localhost:8080/api/v1/rbac/permissions
+Authorization: Bearer {{token}}
+
+### Create Device
+POST http://localhost:8080/api/v1/devices
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "PLC-1",
+  "device_type": "PLC",
+  "ip_address": "192.168.1.50",
+  "serial_number": "SN-98765",
+  "location": "Control Room A"
+}
+
+### List Devices
+GET http://localhost:8080/api/v1/devices
+Authorization: Bearer {{token}}
+
+### Trigger Packet Capture
+POST http://localhost:8080/api/v1/packet-capture
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "interface": "eth0",
+  "duration_seconds": 10,
+  "output_filename": "manual_capture.pcap"
+}

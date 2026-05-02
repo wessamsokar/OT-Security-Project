@@ -70,15 +70,15 @@ flowchart LR
 
 ## Quick Start (Windows)
 
-### Option A: one-click launcher
+### Option A: one-click launcher (recommended)
 
 ```powershell
-./Start-ICS-Platform.bat
+./ICS.bat
 ```
 
-This runs full startup (build, up, migrate, seed) and validates health.
+This runs full startup in hot-reload dev mode (build, up, migrate) and validates health.
 
-### Option B: PowerShell full startup
+### Option B: PowerShell full startup (hot-reload dev mode)
 
 ```powershell
 ./scripts/start-platform.ps1

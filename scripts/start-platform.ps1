@@ -101,17 +101,18 @@ if (-not (Test-Path ".env")) {
     Copy-Item -Path ".env.example" -Destination ".env" -Force
 }
 
-Write-Step "Building and starting all services"
-docker compose up --build -d
+Write-Step "Building and starting services in hot-reload dev mode"
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build `
+    postgres redis ml-service backend backend-worker frontend-dev gateway
 
 Write-Step "Running database migrations"
-docker compose exec -w /app backend alembic upgrade head
+docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -w /app backend alembic upgrade head
 
 Write-Step "Seeding sample data"
-docker compose exec -w /app backend python seed_data.py
+docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -w /app backend python seed_data.py
 
 Write-Step "Verifying services"
-docker compose ps
+docker compose -f docker-compose.yml -f docker-compose.dev.yml ps
 Wait-HttpOk -Url "http://localhost:8080" -MaxAttempts 40 -DelaySeconds 2
 Wait-HttpOk -Url "http://localhost:8080/healthz" -MaxAttempts 30 -DelaySeconds 2
 
