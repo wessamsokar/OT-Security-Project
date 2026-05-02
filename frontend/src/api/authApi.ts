@@ -54,3 +54,21 @@ export async function registerUser(values: AuthFormValues): Promise<void> {
     password: values.password
   });
 }
+
+export async function forgotPassword(email: string): Promise<{ message: string }> {
+  const response = await apiClient.post<{ message: string }>("/v1/auth/forgot-password", { email });
+  return response.data;
+}
+
+export async function resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
+  const response = await apiClient.post<{ message: string }>("/v1/auth/reset-password", {
+    token,
+    new_password: newPassword
+  });
+  return response.data;
+}
+
+export async function verifyEmail(token: string): Promise<{ message: string }> {
+  const response = await apiClient.post<{ message: string }>("/v1/auth/verify-email", { token });
+  return response.data;
+}

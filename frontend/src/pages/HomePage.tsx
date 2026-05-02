@@ -1,6 +1,7 @@
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { Link } from "react-router-dom";
 
+import { LiveThreatSnapshot } from "../components/LiveThreatSnapshot";
 import { Footer } from "../components/layout/Footer";
 import { Navbar } from "../components/layout/Navbar";
 import { Reveal } from "../components/motion/Reveal";
@@ -73,30 +74,16 @@ export function HomePage() {
                   Start OT Monitoring <ArrowRight size={16} className="ml-1 inline" />
                 </Button>
               </Link>
-              <Link to="/login">
+              <Link to="/live-threats">
                 <Button variant="outline" size="lg">
-                  View Detection Demo
+                  View Live Snapshot
                 </Button>
               </Link>
             </div>
           </Reveal>
 
           <Reveal delay={0.12}>
-            <div className="rounded-3xl border border-white/10 bg-gradient-to-b from-[#101b3d]/70 to-[#0a1228]/58 p-7 shadow-panel">
-              <p className="text-xs uppercase tracking-[0.18em] text-brand">Live OT Threat Snapshot</p>
-              <div className="mt-6 space-y-4">
-                {[
-                  ["Critical OT alerts", "07"],
-                  ["Detected attack events", "1,428"],
-                  ["Mean detection latency", "2.1s"]
-                ].map(([label, value]) => (
-                  <div key={label} className="rounded-xl border border-white/10 bg-white/5 p-4">
-                    <p className="text-xs text-muted">{label}</p>
-                    <p className="mt-1 text-xl font-semibold text-white">{value}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <LiveThreatSnapshot variant="compact" />
           </Reveal>
         </section>
 

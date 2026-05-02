@@ -1,7 +1,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
-import { registerUser } from "../api/authApi";
+import { forgotPassword, registerUser } from "../api/authApi";
 import { Button } from "../components/ui/Button";
 import { InputField } from "../components/ui/InputField";
 import { AuthLayout } from "../layouts/AuthLayout";
@@ -13,6 +13,7 @@ export function RegisterPage() {
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  const [submitInfo, setSubmitInfo] = useState("");
 
   const errors = useMemo(() => {
     return {
@@ -25,6 +26,7 @@ export function RegisterPage() {
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setSubmitError("");
+    setSubmitInfo("");
 
     if (errors.fullName || errors.email || errors.password || !fullName || !email || !password) {
       setSubmitError("Please complete all required fields correctly.");
@@ -34,6 +36,12 @@ export function RegisterPage() {
     setIsSubmitting(true);
     try {
       await registerUser({ fullName, email, password });
+      try {
+        await forgotPassword(email.trim());
+      } catch {
+        // no-op: registration success should not fail due to email transport
+      }
+      setSubmitInfo("Account created. Verification/reset token email has been sent.");
       navigate("/login");
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "Unable to create account right now.");
@@ -75,6 +83,7 @@ export function RegisterPage() {
         />
 
         {submitError ? <p className="text-sm text-danger">{submitError}</p> : null}
+        {submitInfo ? <p className="text-sm text-emerald-300">{submitInfo}</p> : null}
 
         <Button type="submit" loading={isSubmitting} className="w-full" size="lg">
           Create account

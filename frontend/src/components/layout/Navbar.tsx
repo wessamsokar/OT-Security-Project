@@ -1,11 +1,12 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Menu, PanelLeft, X } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { Logo } from "./Logo";
 import { Button } from "../ui/Button";
-import { clearAuthSession, getAuthSession, isAuthenticated } from "../../lib/authSession";
+import { clearAuthSession, getAuthSession, getUserRole, hasRole, isAuthenticated } from "../../lib/authSession";
+import { PUBLIC_NAV_ITEMS, TOP_NAV_ITEMS } from "../../lib/navigation";
 
 function getUserDisplayName() {
   const session = getAuthSession();
@@ -19,20 +20,22 @@ function getUserDisplayName() {
     return `${parts[0]} Analyst`;
   }
 
-  return "Security Analyst";
+  return "Security Analyst llll";
 }
 
 type NavbarProps = {
+  onNavItemClick?: () => void;
+  onSidebarToggle?: () => void;
   isSidebarOpen?: boolean;
-  onToggleSidebar?: () => void;
 };
 
-export function Navbar({ isSidebarOpen = true, onToggleSidebar }: NavbarProps) {
+export function Navbar({ onNavItemClick, onSidebarToggle, isSidebarOpen = false }: NavbarProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const [authed, setAuthed] = useState<boolean>(isAuthenticated());
   const [displayName, setDisplayName] = useState<string>(getUserDisplayName());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const role = getUserRole();
 
   useEffect(() => {
     const sync = () => {
@@ -60,19 +63,15 @@ export function Navbar({ isSidebarOpen = true, onToggleSidebar }: NavbarProps) {
     >
       <div className="relative mx-auto flex max-w-7xl items-center justify-between px-4 py-3 md:px-8">
         <div className="flex items-center gap-2">
-          {authed && onToggleSidebar ? (
+          {onSidebarToggle ? (
             <button
               type="button"
-              onClick={onToggleSidebar}
-              className="hidden rounded-xl border border-white/15 bg-white/5 p-2 text-muted transition-all hover:text-white md:inline-flex"
-              aria-label="Toggle sidebar"
+              onClick={onSidebarToggle}
+              className="hidden items-center rounded-xl border border-white/10 bg-white/5 p-2 text-sm text-muted transition hover:text-white md:inline-flex"
+              aria-label={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
+              title={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
             >
-              <motion.span
-                animate={{ rotate: isSidebarOpen ? 0 : 180, scale: isSidebarOpen ? 1 : 1.08 }}
-                transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-              >
-                <PanelLeft size={16} />
-              </motion.span>
+              {isSidebarOpen ? <X size={15} /> : <Menu size={15} />}
             </button>
           ) : null}
           <Logo />
@@ -80,66 +79,43 @@ export function Navbar({ isSidebarOpen = true, onToggleSidebar }: NavbarProps) {
         <nav className="hidden items-center gap-7 text-sm text-muted md:flex">
           {authed ? (
             <>
-              <NavLink
-                to="/dashboard"
-                end
-                className={({ isActive }) =>
-                  ["transition-colors hover:text-text", isActive ? "text-text" : "text-muted"].join(" ")
-                }
-              >
-                Dashboard
-              </NavLink>
-              <NavLink
-                to="/dashboard/network-graph"
-                className={({ isActive }) =>
-                  ["transition-colors hover:text-text", isActive ? "text-text" : "text-muted"].join(" ")
-                }
-              >
-                Network Graph
-              </NavLink>
-              <NavLink
-                to="/dashboard/alerts"
-                className={({ isActive }) =>
-                  ["transition-colors hover:text-text", isActive ? "text-text" : "text-muted"].join(" ")
-                }
-              >
-                Alerts
-              </NavLink>
-              <NavLink
-                to="/dashboard/devices"
-                className={({ isActive }) =>
-                  ["transition-colors hover:text-text", isActive ? "text-text" : "text-muted"].join(" ")
-                }
-              >
-                Devices
-              </NavLink>
-              <NavLink
-                to="/dashboard/settings"
-                className={({ isActive }) =>
-                  ["transition-colors hover:text-text", isActive ? "text-text" : "text-muted"].join(" ")
-                }
-              >
-                Settings
-              </NavLink>
+              {TOP_NAV_ITEMS.filter((item) => !item.roles || (role ? hasRole(item.roles) : false)).map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.to === "/dashboard"}
+                  onClick={onNavItemClick}
+                  className={({ isActive }) =>
+                    ["transition-colors hover:text-text", isActive ? "text-text" : "text-muted"].join(" ")
+                  }
+                >
+                  {item.label}
+                </NavLink>
+              ))}
             </>
           ) : (
             <>
-              <a href="#features" className="transition-colors hover:text-text">
-                Features
-              </a>
-              <a href="#workflow" className="transition-colors hover:text-text">
-                How it works
-              </a>
-              <a href="#security" className="transition-colors hover:text-text">
-                Security
-              </a>
+              {PUBLIC_NAV_ITEMS.map((item) =>
+                item.to.startsWith("#") ? (
+                  <a key={item.to} href={item.to} className="transition-colors hover:text-text">
+                    {item.label}
+                  </a>
+                ) : (
+                  <NavLink key={item.to} to={item.to} className="transition-colors hover:text-text">
+                    {item.label}
+                  </NavLink>
+                )
+              )}
             </>
           )}
         </nav>
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setMobileMenuOpen((prev) => !prev)}
+            onClick={() => {
+              onSidebarToggle?.();
+              setMobileMenuOpen((prev) => !prev);
+            }}
             className="inline-flex rounded-xl border border-white/15 bg-white/5 p-2 text-muted transition-all hover:text-white md:hidden"
             aria-label="Toggle top menu"
           >
@@ -194,17 +170,38 @@ export function Navbar({ isSidebarOpen = true, onToggleSidebar }: NavbarProps) {
               <div className="space-y-1">
                 {authed ? (
                   <>
-                    <NavLink to="/dashboard" className="block rounded-lg px-3 py-2 text-sm text-muted transition hover:bg-white/10 hover:text-white">Dashboard</NavLink>
-                    <NavLink to="/dashboard/network-graph" className="block rounded-lg px-3 py-2 text-sm text-muted transition hover:bg-white/10 hover:text-white">Network Graph</NavLink>
-                    <NavLink to="/dashboard/alerts" className="block rounded-lg px-3 py-2 text-sm text-muted transition hover:bg-white/10 hover:text-white">Alerts</NavLink>
-                    <NavLink to="/dashboard/devices" className="block rounded-lg px-3 py-2 text-sm text-muted transition hover:bg-white/10 hover:text-white">Devices</NavLink>
-                    <NavLink to="/dashboard/settings" className="block rounded-lg px-3 py-2 text-sm text-muted transition hover:bg-white/10 hover:text-white">Settings</NavLink>
+                    {TOP_NAV_ITEMS.filter((item) => !item.roles || (role ? hasRole(item.roles) : false)).map((item) => (
+                      <NavLink
+                        key={item.to}
+                        to={item.to}
+                        onClick={onNavItemClick}
+                        className="block rounded-lg px-3 py-2 text-sm text-muted transition hover:bg-white/10 hover:text-white"
+                      >
+                        {item.label}
+                      </NavLink>
+                    ))}
                   </>
                 ) : (
                   <>
-                    <a href="#features" className="block rounded-lg px-3 py-2 text-sm text-muted transition hover:bg-white/10 hover:text-white">Features</a>
-                    <a href="#workflow" className="block rounded-lg px-3 py-2 text-sm text-muted transition hover:bg-white/10 hover:text-white">How it works</a>
-                    <a href="#security" className="block rounded-lg px-3 py-2 text-sm text-muted transition hover:bg-white/10 hover:text-white">Security</a>
+                    {PUBLIC_NAV_ITEMS.map((item) =>
+                      item.to.startsWith("#") ? (
+                        <a
+                          key={item.to}
+                          href={item.to}
+                          className="block rounded-lg px-3 py-2 text-sm text-muted transition hover:bg-white/10 hover:text-white"
+                        >
+                          {item.label}
+                        </a>
+                      ) : (
+                        <NavLink
+                          key={item.to}
+                          to={item.to}
+                          className="block rounded-lg px-3 py-2 text-sm text-muted transition hover:bg-white/10 hover:text-white"
+                        >
+                          {item.label}
+                        </NavLink>
+                      )
+                    )}
                   </>
                 )}
               </div>

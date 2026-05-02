@@ -1,0 +1,6 @@
+# Dev-mode placeholder for the production frontend container.
+# In dev mode, nginx routes directly to the Vite HMR dev server (frontend-dev:5173).
+# This container exists only to satisfy the gateway depends_on chain.
+FROM alpine:3.19
+HEALTHCHECK --interval=5s --timeout=2s --retries=1 CMD true
+CMD ["sleep", "infinity"]

@@ -2,13 +2,15 @@ import type { AuthApiResponse } from "../types/auth";
 
 const SESSION_KEY = "ot_sentinel_auth_session";
 
+export type UserRole = "admin" | "analyst" | "viewer";
+
 type AuthSession = {
   token: string;
   user: {
     id: string;
     email: string;
     fullName?: string;
-    role?: "admin" | "analyst" | "viewer";
+    role?: UserRole;
   };
 };
 
@@ -60,4 +62,19 @@ export function isAuthenticated(): boolean {
 export function clearAuthSession() {
   localStorage.removeItem(SESSION_KEY);
   notifyAuthChange();
+}
+
+export function getUserRole(): UserRole | null {
+  const session = getAuthSession();
+  return session?.user?.role ?? null;
+}
+
+export function hasRole(roles: UserRole | UserRole[]): boolean {
+  const current = getUserRole();
+  if (!current) {
+    return false;
+  }
+
+  const allowed = Array.isArray(roles) ? roles : [roles];
+  return allowed.includes(current);
 }
