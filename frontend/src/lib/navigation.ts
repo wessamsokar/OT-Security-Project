@@ -66,7 +66,7 @@ export const SIDEBAR_SECTIONS: NavSection[] = [
     title: "Admin",
     items: [
       { to: "/dashboard/admin/users", label: "Users", icon: Users, roles: ["admin"] },
-      { to: "/dashboard/admin/roles", label: "Roles & Permissions", icon: ShieldCheck, roles: ["admin"] }
+      { to: "/dashboard/admin/roles", label: "Roles", icon: ShieldCheck, roles: ["admin"] }
     ]
   },
   {

@@ -14,7 +14,7 @@ from app.core.security import get_password_hash, create_access_token
 from app.db.base import Base
 from app.main import app
 from app.models.user import User, UserRole
-from app.models.rbac import Role, Permission
+from app.models.rbac import Role
 from app.db.session import get_db
 
 engine = create_engine("sqlite:///./test_db.sqlite", connect_args={"check_same_thread": False})
@@ -47,7 +47,6 @@ def db_session():
 @pytest.fixture(autouse=True)
 def clean_db(db_session):
     db_session.query(Role).delete()
-    db_session.query(Permission).delete()
     db_session.query(User).delete()
     db_session.commit()
 
@@ -86,36 +85,26 @@ def test_rbac_viewer_cannot_create_role(client, viewer_token):
 
 
 def test_rbac_crud_flow(client, admin_token):
-    # 1. Create Permission
-    perm_resp = client.post("/api/v1/rbac/permissions", json={
-        "code": "device.read",
-        "description": "Read devices"
-    }, headers={"Authorization": f"Bearer {admin_token}"})
-    assert perm_resp.status_code == 201
-    perm_id = perm_resp.json()["id"]
-
-    # 2. Create Role with permission
+    # 1. Create Role
     role_resp = client.post("/api/v1/rbac/roles", json={
         "name": "DeviceReader",
-        "description": "Can read devices",
-        "permission_ids": [perm_id]
+        "description": "Can read devices"
     }, headers={"Authorization": f"Bearer {admin_token}"})
     assert role_resp.status_code == 201
     role_id = role_resp.json()["id"]
     
-    # 3. Read Role
+    # 2. Read Role
     get_resp = client.get(f"/api/v1/rbac/roles/{role_id}", headers={"Authorization": f"Bearer {admin_token}"})
     assert get_resp.status_code == 200
     assert get_resp.json()["name"] == "DeviceReader"
-    assert len(get_resp.json()["permissions"]) == 1
     
-    # 4. Update Role
+    # 3. Update Role
     update_resp = client.put(f"/api/v1/rbac/roles/{role_id}", json={
         "name": "SuperDeviceReader"
     }, headers={"Authorization": f"Bearer {admin_token}"})
     assert update_resp.status_code == 200
     assert update_resp.json()["name"] == "SuperDeviceReader"
     
-    # 5. Delete Role
+    # 4. Delete Role
     del_resp = client.delete(f"/api/v1/rbac/roles/{role_id}", headers={"Authorization": f"Bearer {admin_token}"})
     assert del_resp.status_code == 204
