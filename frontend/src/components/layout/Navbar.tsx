@@ -80,30 +80,65 @@ export function Navbar({ onNavItemClick, onSidebarToggle, isSidebarOpen = false 
           {authed ? (
             <>
               {TOP_NAV_ITEMS.filter((item) => !item.roles || (role ? hasRole(item.roles) : false)).map((item) => (
-                <NavLink
+                <motion.div
                   key={item.to}
-                  to={item.to}
-                  end={item.to === "/dashboard"}
-                  onClick={onNavItemClick}
-                  className={({ isActive }) =>
-                    ["transition-colors hover:text-text", isActive ? "text-text" : "text-muted"].join(" ")
-                  }
+                  whileHover={{
+                    y: -2,
+                    textShadow: "0 0 14px rgba(168,85,247,0.9)",
+                    color: "rgb(221 214 254)"
+                  }}
+                  whileTap={{ scale: 0.97, textShadow: "0 0 10px rgba(168,85,247,0.75)" }}
+                  transition={{ duration: 0.18 }}
                 >
-                  {item.label}
-                </NavLink>
+                  <NavLink
+                    to={item.to}
+                    end={item.to === "/dashboard"}
+                    onClick={onNavItemClick}
+                    className={({ isActive }) =>
+                      [
+                        "relative transition-colors duration-200 hover:text-violet-200",
+                        isActive ? "text-violet-100" : "text-muted"
+                      ].join(" ")
+                    }
+                  >
+                    {item.label}
+                  </NavLink>
+                </motion.div>
               ))}
             </>
           ) : (
             <>
               {PUBLIC_NAV_ITEMS.map((item) =>
                 item.to.startsWith("#") ? (
-                  <a key={item.to} href={item.to} className="transition-colors hover:text-text">
+                  <motion.a
+                    key={item.to}
+                    href={item.to}
+                    className="transition-colors hover:text-violet-200"
+                    whileHover={{
+                      y: -2,
+                      textShadow: "0 0 14px rgba(168,85,247,0.95)",
+                      color: "rgb(221 214 254)"
+                    }}
+                    whileTap={{ scale: 0.97, textShadow: "0 0 10px rgba(168,85,247,0.75)" }}
+                    transition={{ duration: 0.18 }}
+                  >
                     {item.label}
-                  </a>
+                  </motion.a>
                 ) : (
-                  <NavLink key={item.to} to={item.to} className="transition-colors hover:text-text">
-                    {item.label}
-                  </NavLink>
+                  <motion.div
+                    key={item.to}
+                    whileHover={{
+                      y: -2,
+                      textShadow: "0 0 14px rgba(168,85,247,0.95)",
+                      color: "rgb(221 214 254)"
+                    }}
+                    whileTap={{ scale: 0.97, textShadow: "0 0 10px rgba(168,85,247,0.75)" }}
+                    transition={{ duration: 0.18 }}
+                  >
+                    <NavLink to={item.to} className="transition-colors hover:text-violet-200">
+                      {item.label}
+                    </NavLink>
+                  </motion.div>
                 )
               )}
             </>
@@ -128,32 +163,72 @@ export function Navbar({ onNavItemClick, onSidebarToggle, isSidebarOpen = false 
           </button>
           {authed ? (
             <>
-              <Link to="/dashboard/profile">
-                <Button variant="ghost" size="sm">
-                  {displayName}
-                </Button>
-              </Link>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  clearAuthSession();
-                  navigate("/", { replace: true });
+              <motion.div
+                className="rounded-xl2"
+                whileHover={{
+                  y: -2,
+                  scale: 1.02,
+                  boxShadow: "0 0 0 1px rgba(168,85,247,0.5), 0 0 20px rgba(168,85,247,0.45)"
                 }}
+                whileTap={{ scale: 0.97 }}
               >
-                Logout
-              </Button>
+                <Link to="/dashboard/profile">
+                  <Button variant="ghost" size="sm">
+                    {displayName}
+                  </Button>
+                </Link>
+              </motion.div>
+              <motion.div
+                className="rounded-xl2"
+                whileHover={{
+                  y: -2,
+                  scale: 1.02,
+                  boxShadow: "0 0 0 1px rgba(168,85,247,0.5), 0 0 20px rgba(168,85,247,0.45)"
+                }}
+                whileTap={{ scale: 0.97 }}
+              >
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    clearAuthSession();
+                    navigate("/", { replace: true });
+                  }}
+                >
+                  Logout
+                </Button>
+              </motion.div>
             </>
           ) : (
             <>
-              <Link to="/login">
-                <Button variant="ghost" size="sm">
-                  Login
-                </Button>
-              </Link>
-              <Link to="/register">
-                <Button size="sm">Start Free</Button>
-              </Link>
+              <motion.div
+                className="rounded-xl2"
+                whileHover={{
+                  y: -2,
+                  scale: 1.02,
+                  boxShadow: "0 0 0 1px rgba(168,85,247,0.5), 0 0 20px rgba(168,85,247,0.45)"
+                }}
+                whileTap={{ scale: 0.97 }}
+              >
+                <Link to="/login">
+                  <Button variant="ghost" size="sm">
+                    Login
+                  </Button>
+                </Link>
+              </motion.div>
+              <motion.div
+                className="rounded-xl2"
+                whileHover={{
+                  y: -2,
+                  scale: 1.02,
+                  boxShadow: "0 0 0 1px rgba(168,85,247,0.5), 0 0 20px rgba(168,85,247,0.45)"
+                }}
+                whileTap={{ scale: 0.97 }}
+              >
+                <Link to="/register">
+                  <Button size="sm">Start Free</Button>
+                </Link>
+              </motion.div>
             </>
           )}
         </div>
