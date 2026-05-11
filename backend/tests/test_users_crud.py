@@ -59,15 +59,23 @@ def admin_token(db_session):
     admin = User(username="admin_users", email="admin_users@example.com", hashed_password="123", role=UserRole.admin)
     db_session.add(admin)
     db_session.commit()
-    return create_access_token(subject=admin.username)
+    db_session.refresh(admin)
+    return create_access_token(subject=str(admin.id))
 
 
 @pytest.fixture
 def viewer_token(db_session):
-    viewer = User(username="viewer_users", email="viewer_users@example.com", hashed_password="123", role=UserRole.viewer)
+    viewer = User(
+        username="viewer_users",
+        email="viewer_users@example.com",
+        hashed_password="123",
+        role=UserRole.viewer,
+        is_admin_approved=True,
+    )
     db_session.add(viewer)
     db_session.commit()
-    return create_access_token(subject=viewer.username)
+    db_session.refresh(viewer)
+    return create_access_token(subject=str(viewer.id))
 
 
 def test_users_crud_admin_only(client, admin_token):

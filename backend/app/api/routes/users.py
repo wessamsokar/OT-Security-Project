@@ -1,6 +1,7 @@
+import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -10,18 +11,25 @@ from app.core.config import get_settings
 from app.core.security import get_password_hash
 from app.db.session import get_db
 from app.models.alert import Alert, AlertSeverity
+from app.models.auth_token import AuthToken
 from app.models.device import Device
 from app.models.incident import Incident
 from app.models.traffic_record import TrafficRecord
-from app.models.user import User, UserRole
+from app.models.user import OnboardingStatus, User, UserRole
 from app.schemas.alerts import ActiveThreatResponse, AlertResponse
 from app.schemas.devices import DeviceResponse
 from app.schemas.incidents import IncidentResponse
 from app.schemas.traffic import TrafficRecordResponse
-from app.schemas.users import UserAdminResponse, UserCreate, UserUpdate
+from app.schemas.users import OnboardingRejectRequest, UserAdminResponse, UserCreate, UserUpdate
+from app.services.email import (
+    send_email_verified_by_admin_notice,
+    send_ot_onboarding_approved_email,
+    send_ot_onboarding_rejected_email,
+)
 
 router = APIRouter(prefix="/users", tags=["users"])
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=list[UserAdminResponse])
@@ -56,9 +64,8 @@ def create_user(
 
     if db.query(User).filter(func.lower(User.email) == email).first():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
-    if db.query(User).filter(func.lower(User.username) == username.lower()).first():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists")
 
+    approved = payload.is_admin_approved
     user = User(
         username=username,
         email=email,
@@ -67,6 +74,10 @@ def create_user(
         is_active=payload.is_active,
         is_email_verified=payload.is_email_verified,
         email_verified_at=datetime.utcnow() if payload.is_email_verified else None,
+        is_admin_approved=approved,
+        admin_approved_at=datetime.utcnow() if approved else None,
+        onboarding_status=OnboardingStatus.approved if approved else OnboardingStatus.pending,
+        rejected_at=None,
     )
     db.add(user)
     try:
@@ -204,6 +215,7 @@ def list_user_traffic(
 def update_user(
     user_id: int,
     payload: UserUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_admin: User = Depends(require_roles(UserRole.admin)),
 ) -> UserAdminResponse:
@@ -211,16 +223,11 @@ def update_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+    notify_email_verified = False
+    notify_account_approved = False
+
     if payload.username is not None:
-        username = payload.username.strip()
-        existing = (
-            db.query(User)
-            .filter(func.lower(User.username) == username.lower(), User.id != user.id)
-            .first()
-        )
-        if existing:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists")
-        user.username = username
+        user.username = payload.username.strip()
 
     if payload.email is not None:
         email = payload.email.strip().lower()
@@ -243,11 +250,28 @@ def update_user(
         user.is_active = payload.is_active
 
     if payload.is_email_verified is not None:
+        was_email_verified = user.is_email_verified
         user.is_email_verified = payload.is_email_verified
         if payload.is_email_verified and not user.email_verified_at:
             user.email_verified_at = datetime.utcnow()
         if not payload.is_email_verified:
             user.email_verified_at = None
+        if payload.is_email_verified and not was_email_verified:
+            notify_email_verified = True
+
+    if payload.is_admin_approved is not None:
+        was_approved = user.is_admin_approved
+        user.is_admin_approved = payload.is_admin_approved
+        if payload.is_admin_approved:
+            user.onboarding_status = OnboardingStatus.approved
+            user.rejected_at = None
+            if not was_approved:
+                user.admin_approved_at = datetime.utcnow()
+                notify_account_approved = True
+        else:
+            user.admin_approved_at = None
+            if user.onboarding_status != OnboardingStatus.rejected:
+                user.onboarding_status = OnboardingStatus.pending
 
     if current_admin.id == user.id and payload.role is not None and payload.role != UserRole.admin:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Admin cannot demote self")
@@ -259,6 +283,101 @@ def update_user(
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid user payload")
     db.refresh(user)
+
+    verified_email_to = user.email
+    verified_name = user.username
+
+    if notify_email_verified:
+
+        def _send_verified_email() -> None:
+            ok, diag = send_email_verified_by_admin_notice(verified_email_to, verified_name)
+            if not ok:
+                logger.warning("Verified-email notification not sent: %s", diag)
+
+        background_tasks.add_task(_send_verified_email)
+
+    if notify_account_approved:
+        company_snap = (user.company_name or "").strip()
+
+        def _send_approved_email() -> None:
+            ok, diag = send_ot_onboarding_approved_email(verified_email_to, verified_name, company_snap)
+            if not ok:
+                logger.warning("Onboarding-approved notification not sent: %s", diag)
+
+        background_tasks.add_task(_send_approved_email)
+
+    return user
+
+
+@router.post("/{user_id}/onboarding/approve", response_model=UserAdminResponse)
+def approve_onboarding_registration(
+    user_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_roles(UserRole.admin)),
+) -> UserAdminResponse:
+    """Mark self-registered user as approved; sends enterprise welcome email."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if user.role == UserRole.admin:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Administrators use role management, not onboarding approval.")
+
+    user.onboarding_status = OnboardingStatus.approved
+    user.is_admin_approved = True
+    user.admin_approved_at = datetime.utcnow()
+    user.rejected_at = None
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    email_to = user.email
+    name_u = user.username
+    company = (user.company_name or "").strip()
+
+    def _send() -> None:
+        ok, diag = send_ot_onboarding_approved_email(email_to, name_u, company)
+        if not ok:
+            logger.warning("approve_onboarding_registration email failed: %s", diag)
+
+    background_tasks.add_task(_send)
+    return user
+
+
+@router.post("/{user_id}/onboarding/reject", response_model=UserAdminResponse)
+def reject_onboarding_registration(
+    user_id: int,
+    payload: OnboardingRejectRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_roles(UserRole.admin)),
+) -> UserAdminResponse:
+    """Reject access request; terminates login for this account until re-registration policy allows."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if user.role == UserRole.admin:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot reject administrator accounts.")
+
+    user.onboarding_status = OnboardingStatus.rejected
+    user.is_admin_approved = False
+    user.admin_approved_at = None
+    user.rejected_at = datetime.utcnow()
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    email_to = user.email
+    name_u = user.username
+    company = (user.company_name or "").strip()
+    reason = payload.reason
+
+    def _send() -> None:
+        ok, diag = send_ot_onboarding_rejected_email(email_to, name_u, company, reason)
+        if not ok:
+            logger.warning("reject_onboarding_registration email failed: %s", diag)
+
+    background_tasks.add_task(_send)
     return user
 
 
@@ -275,6 +394,18 @@ def delete_user(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Default admin cannot be deleted")
     if user.id == current_admin.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Admin cannot delete self")
-    db.delete(user)
-    db.commit()
+
+    # FKs without ON DELETE CASCADE (auth_tokens, devices) would raise IntegrityError on user delete.
+    try:
+        db.query(AuthToken).filter(AuthToken.user_id == user_id).delete(synchronize_session=False)
+        db.query(Device).filter(Device.user_id == user_id).delete(synchronize_session=False)
+        db.delete(user)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        logger.warning("delete_user failed for user_id=%s: %s", user_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Unable to delete this user because related data could not be removed.",
+        )
     return None

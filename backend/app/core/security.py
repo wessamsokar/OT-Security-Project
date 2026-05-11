@@ -17,12 +17,21 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def create_access_token(subject: str, expires_delta: timedelta | None = None) -> str:
+def create_access_token(
+    subject: str,
+    expires_delta: timedelta | None = None,
+    *,
+    extra_claims: dict[str, Any] | None = None,
+) -> str:
     settings = get_settings()
     expire = datetime.now(timezone.utc) + (
         expires_delta if expires_delta else timedelta(minutes=settings.jwt_access_token_expire_minutes)
     )
     to_encode: dict[str, Any] = {"sub": subject, "exp": expire}
+    if extra_claims:
+        for key, val in extra_claims.items():
+            if val is not None:
+                to_encode[key] = val
     return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 

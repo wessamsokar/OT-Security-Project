@@ -10,6 +10,12 @@ export type DeviceResponse = {
   location: string | null;
   metadata_json: Record<string, unknown>;
   is_active: boolean;
+  /** Last ML risk score (0–1) from traffic analysis; server-owned. */
+  last_ml_risk_score: number | null;
+  last_ml_status: string | null;
+  monitoring_status: string;
+  last_traffic_at: string | null;
+  last_seen_traffic_id: number | null;
   created_at: string;
   updated_at: string;
 };

@@ -4,7 +4,7 @@ from app.core.security import get_password_hash
 from app.db.session import SessionLocal
 from app.models.alert import Alert, AlertSeverity, AlertStatus
 from app.models.traffic_record import TrafficRecord
-from app.models.user import User, UserRole
+from app.models.user import OnboardingStatus, User, UserRole
 
 
 def main() -> None:
@@ -19,12 +19,18 @@ def main() -> None:
                         email="admin@ics.local",
                         hashed_password=get_password_hash("admin123"),
                         role=UserRole.admin,
+                        is_admin_approved=True,
+                        admin_approved_at=datetime.utcnow(),
+                        onboarding_status=OnboardingStatus.approved,
                     ),
                     User(
                         username="customer",
                         email="customer@ics.local",
                         hashed_password=get_password_hash("customer123"),
                         role=UserRole.customer,
+                        is_admin_approved=True,
+                        admin_approved_at=datetime.utcnow(),
+                        onboarding_status=OnboardingStatus.approved,
                     ),
                 ]
             )

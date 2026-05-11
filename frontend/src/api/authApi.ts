@@ -1,5 +1,5 @@
 import { apiClient } from "./client";
-import type { AuthApiResponse, AuthFormValues } from "../types/auth";
+import type { AuthApiResponse, AuthFormValues, OnboardingStatus, OtRegisterPayload } from "../types/auth";
 import axios from "axios";
 
 type LoginResponse = {
@@ -12,6 +12,9 @@ type MeResponse = {
   username: string;
   email: string;
   role: "admin" | "customer" | "analyst" | "viewer";
+  is_email_verified: boolean;
+  is_admin_approved: boolean;
+  onboarding_status: string;
 };
 
 type FastApiValidationError = {
@@ -23,6 +26,14 @@ type FastApiErrorResponse = {
   message?: string;
 };
 
+function normalizeMeOnboarding(raw: string | undefined): OnboardingStatus | undefined {
+  const v = String(raw ?? "").toLowerCase();
+  if (v === "pending" || v === "approved" || v === "rejected") {
+    return v;
+  }
+  return undefined;
+}
+
 function parseApiError(error: unknown, fallbackMessage: string): Error {
   if (!axios.isAxiosError<FastApiErrorResponse>(error)) {
     return new Error(fallbackMessage);
@@ -30,6 +41,13 @@ function parseApiError(error: unknown, fallbackMessage: string): Error {
 
   if (error.response?.status === 401) {
     return new Error("Invalid email or password.");
+  }
+
+  if (error.response?.status === 403) {
+    const d403 = error.response?.data?.detail;
+    if (typeof d403 === "string" && d403.trim()) {
+      return new Error(d403);
+    }
   }
 
   const detail = error.response?.data?.detail;
@@ -78,7 +96,8 @@ export async function loginUser(values: AuthFormValues): Promise<AuthApiResponse
         id: String(me.id),
         email: me.email,
         fullName: me.username,
-        role: me.role === "admin" ? "admin" : "customer"
+        role: me.role === "admin" ? "admin" : "customer",
+        onboardingStatus: normalizeMeOnboarding(me.onboarding_status)
       }
     };
   } catch (error) {
@@ -86,16 +105,47 @@ export async function loginUser(values: AuthFormValues): Promise<AuthApiResponse
   }
 }
 
-export async function registerUser(values: AuthFormValues): Promise<void> {
-  if (!values.fullName?.trim() || !values.email.trim() || !values.password) {
-    throw new Error("Full name, email, and password are required.");
+export async function registerUser(payload: OtRegisterPayload): Promise<void> {
+  const {
+    fullName,
+    companyName,
+    email,
+    jobTitle,
+    industryType,
+    infrastructureType,
+    estimatedDeviceCount,
+    country,
+    purposeOfAccess,
+    operatesOtIcs,
+    password
+  } = payload;
+
+  if (
+    !fullName.trim() ||
+    !companyName.trim() ||
+    !email.trim() ||
+    !jobTitle.trim() ||
+    !infrastructureType.trim() ||
+    !country.trim() ||
+    !purposeOfAccess.trim() ||
+    !password
+  ) {
+    throw new Error("Please complete all required fields.");
   }
 
   try {
     await apiClient.post("/v1/auth/register", {
-      full_name: values.fullName.trim(),
-      email: values.email.trim(),
-      password: values.password
+      full_name: fullName.trim(),
+      company_name: companyName.trim(),
+      email: email.trim(),
+      job_title: jobTitle.trim(),
+      industry_type: industryType,
+      infrastructure_type: infrastructureType.trim(),
+      estimated_device_count: estimatedDeviceCount,
+      country: country.trim(),
+      purpose_of_access: purposeOfAccess.trim(),
+      operates_ot_ics: operatesOtIcs,
+      password
     });
   } catch (error) {
     throw parseApiError(error, "Unable to create account right now.");

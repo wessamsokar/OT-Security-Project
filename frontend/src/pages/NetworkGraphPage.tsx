@@ -20,15 +20,16 @@ function buildGraph(devices: DeviceResponse[]): { nodes: GraphNode[]; links: Gra
   const startX = 90;
   const startY = 80;
 
-  const nodes = devices.map((device, index) => {
+  const nodes: GraphNode[] = devices.map((device, index) => {
     const col = index % cols;
     const row = Math.floor(index / cols);
+    const status: GraphNode["status"] = device.is_active ? "online" : "warning";
     return {
       id: `device-${device.id}`,
       label: device.name,
       x: startX + col * gapX,
       y: startY + row * gapY,
-      status: device.is_active ? "online" : "warning"
+      status
     };
   });
 

@@ -4,20 +4,38 @@ import { useState } from "react";
 type Props = {
   id: string;
   label: string;
-  type?: "text" | "email" | "password";
+  type?: "text" | "email" | "password" | "number";
   placeholder?: string;
   value: string;
   onChange: (value: string) => void;
   error?: string;
+  min?: number;
+  max?: number;
+  /** Tighter label/input spacing for dense forms (e.g. onboarding). */
+  compact?: boolean;
 };
 
-export function InputField({ id, label, type = "text", placeholder, value, onChange, error }: Props) {
+export function InputField({
+  id,
+  label,
+  type = "text",
+  placeholder,
+  value,
+  onChange,
+  error,
+  min,
+  max,
+  compact
+}: Props) {
   const [showPassword, setShowPassword] = useState(false);
   const actualType = type === "password" ? (showPassword ? "text" : "password") : type;
 
+  const pad = compact ? "px-2.5 py-2" : "px-3 py-3";
+  const labelMb = compact ? "mb-1 block text-xs text-muted sm:text-sm" : "mb-2 block text-sm text-muted";
+
   return (
-    <label htmlFor={id} className="block">
-      <span className="mb-2 block text-sm text-muted">{label}</span>
+    <label htmlFor={id} className="block min-w-0">
+      <span className={labelMb}>{label}</span>
       <div className="relative">
         <input
           id={id}
@@ -25,8 +43,11 @@ export function InputField({ id, label, type = "text", placeholder, value, onCha
           value={value}
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
+          min={type === "number" ? min : undefined}
+          max={type === "number" ? max : undefined}
           className={[
-            "w-full rounded-xl border bg-[#0c152d]/80 px-3 py-3 text-sm text-text outline-none transition",
+            "w-full min-h-0 rounded-xl border bg-[#0c152d]/80 text-sm text-text outline-none transition",
+            pad,
             "placeholder:text-muted/70 focus:border-brand/70 focus:ring-2 focus:ring-brand/20",
             error ? "border-danger/80" : "border-white/15"
           ].join(" ")}

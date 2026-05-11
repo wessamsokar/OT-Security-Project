@@ -29,6 +29,7 @@ def test_login_success():
                 email="analyst@example.com",
                 hashed_password=get_password_hash("secret123"),
                 role=UserRole.analyst,
+                is_admin_approved=True,
             )
         )
         db.commit()

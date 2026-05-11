@@ -15,21 +15,29 @@ services:
       WATCHFILES_FORCE_POLLING: "true"
     volumes:
       - ./backend:/app          # Mount live code into container
-    command: >
-      uvicorn app.main:app
-      --host 0.0.0.0
-      --port 8000
-      --reload
-      --reload-dir /app/app
+    # List form so docker-entrypoint.sh receives argv correctly after `alembic upgrade head`
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app/app
 
   # ─── Backend Worker (hot-reload) ────────────────────────────────────────────
   backend-worker:
     volumes:
       - ./backend:/app
-    command: >
-      celery -A app.tasks.celery_app.celery_app worker
-      --loglevel=info
-      --autoscale=2,1
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app.celery_app
+      - worker
+      - --loglevel=info
+      - --autoscale=2,1
 
   # ─── Frontend (Vite HMR dev server) ─────────────────────────────────────────
   frontend-dev:

@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 
+from app.api.dependencies import enforce_ot_platform_access
 from app.core.security import decode_token
 from app.db.session import SessionLocal
 from app.models.alert import Alert
@@ -102,7 +103,12 @@ def _validate_stream_token(token: str) -> User:
 
     db = SessionLocal()
     try:
-        user = db.query(User).filter(User.username == payload["sub"]).first()
+        sub = payload["sub"]
+        try:
+            uid = int(sub)
+            user = db.query(User).filter(User.id == uid).first()
+        except (ValueError, TypeError):
+            user = db.query(User).filter(User.username == sub).first()
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
         allowed = {
@@ -117,6 +123,7 @@ def _validate_stream_token(token: str) -> User:
 
         if not {role for role in user_roles if role}.intersection(allowed):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+        enforce_ot_platform_access(user)
         return user
     finally:
         db.close()

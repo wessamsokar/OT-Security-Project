@@ -2,7 +2,7 @@ import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import { Link } from "react-router-dom";
 
-import { LiveThreatSnapshot } from "../components/LiveThreatSnapshot";
+import { OtTopologyHeroVisual } from "../components/OtTopologyHeroVisual";
 import { Footer } from "../components/layout/Footer";
 import { Navbar } from "../components/layout/Navbar";
 import { Reveal } from "../components/motion/Reveal";
@@ -130,16 +130,11 @@ export function HomePage() {
                   Start OT Monitoring <ArrowRight size={16} className="ml-1 inline" />
                 </Button>
               </Link>
-              <Link to="/live-threats">
-                <Button variant="outline" size="lg">
-                  View Live Snapshot
-                </Button>
-              </Link>
             </div>
           </Reveal>
 
           <Reveal delay={0.12}>
-            <LiveThreatSnapshot variant="compact" />
+            <OtTopologyHeroVisual />
           </Reveal>
         </section>
 

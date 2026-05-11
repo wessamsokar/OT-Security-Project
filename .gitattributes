@@ -1,0 +1,2 @@
+# Avoid Windows CRLF breaking Linux container scripts (bad interpreter / set -e failures)
+*.sh text eol=lf

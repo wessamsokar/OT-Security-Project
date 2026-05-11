@@ -31,9 +31,14 @@ def test_infer_returns_expected_fields(client):
 
     body = response.json()
     assert "risk_score" in body
+    assert "ml_status" in body
+    assert body["ml_status"] in ("normal", "suspicious", "under_attack", "unknown_degraded")
+    assert body.get("alert_severity") in ("low", "medium", "high", "critical")
+    assert isinstance(body.get("attack_detected"), bool)
     assert "attack_class" in body
     assert "confidence" in body
     assert "explanation" in body
+    assert isinstance(body["explanation"], dict)
 
 
 def test_readyz_includes_pipeline_mode(client):

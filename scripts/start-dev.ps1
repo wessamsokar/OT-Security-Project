@@ -76,12 +76,14 @@ docker compose up -d postgres redis ml-service
 
 Write-Step "Starting backend with hot-reload + frontend with Vite HMR"
 # -f base compose, -f dev override - merges volume mounts + reload commands
+# Omit --build on every startup: reuses cached images/pip layers (~GB TensorFlow installs).
+# Rebuild explicitly when Dockerfile/requirements change: docker compose -f docker-compose.yml -f docker-compose.dev.yml build
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d `
-    --build backend backend-worker frontend-dev gateway
+    backend backend-worker frontend-dev gateway
 
 Write-Step "Running database migrations"
 Start-Sleep -Seconds 5
-docker compose exec -T backend alembic upgrade head
+docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -w /app -T backend alembic upgrade head
 
 Write-Step "Verifying services"
 docker compose -f docker-compose.yml -f docker-compose.dev.yml ps
@@ -100,5 +102,5 @@ Write-Host ""
 Write-Host "  Backend  auto-reloads on any Python file change"          -ForegroundColor Cyan
 Write-Host "  Frontend auto-reloads on any React/TS file change"        -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  To stop:  docker compose down"                            -ForegroundColor DarkGray
+Write-Host "  To stop (ICS.bat q): compose stop keeps images/cache"             -ForegroundColor DarkGray
 Write-Host "==========================================================" -ForegroundColor Green

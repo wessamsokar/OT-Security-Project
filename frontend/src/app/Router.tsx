@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { Navigate, useLocation, useRoutes } from "react-router-dom";
 
+import { OnboardingAccessProvider, useOnboardingAccess } from "../contexts/OnboardingAccessContext";
 import { hasRole, isAuthenticated } from "../lib/authSession";
 import { AuthenticatedLayout } from "../layouts/AuthenticatedLayout";
 import { ActiveThreatsPage } from "../pages/ActiveThreatsPage";
@@ -8,8 +9,8 @@ import { AlertsPage } from "../pages/AlertsPage";
 import { AdminRolesPage } from "../pages/AdminRolesPage";
 import { AdminUsersPage } from "../pages/AdminUsersPage";
 import { DashboardPage } from "../pages/DashboardPage";
+import { PendingVerificationPage } from "../pages/PendingVerificationPage";
 import { DevicesPage } from "../pages/DevicesPage";
-import { LiveSnapshotPage } from "../pages/LiveSnapshotPage";
 import { LoginPage } from "../pages/LoginPage";
 import { MlConfidencePage } from "../pages/MlConfidencePage";
 import { MttrPage } from "../pages/MttrPage";
@@ -52,97 +53,158 @@ function RoleRoute({ roles, children }: { roles: Array<"admin" | "customer">; ch
   return children;
 }
 
+function ShellLoading() {
+  return (
+    <div className="flex min-h-[50vh] items-center justify-center rounded-3xl border border-white/10 bg-panel/30 px-6 text-sm text-muted">
+      Verifying your account status…
+    </div>
+  );
+}
+
+function DashboardHomeRoute() {
+  const { status, isLoading } = useOnboardingAccess();
+  if (isLoading) {
+    return <ShellLoading />;
+  }
+  if (status === "pending") {
+    return <PendingVerificationPage />;
+  }
+  return <DashboardPage />;
+}
+
+function PlatformFeatureRoute({ children }: { children: JSX.Element }) {
+  const { status, isLoading } = useOnboardingAccess();
+  if (isLoading) {
+    return <ShellLoading />;
+  }
+  if (status === "pending") {
+    return <Navigate to="/dashboard" replace />;
+  }
+  if (status === "rejected") {
+    return null;
+  }
+  return children;
+}
+
+function ProtectedShell() {
+  return (
+    <OnboardingAccessProvider>
+      <AuthenticatedLayout />
+    </OnboardingAccessProvider>
+  );
+}
+
 function AnimatedRoutes() {
   return useRoutes([
     { path: "/", element: <GuestOnlyRoute><HomePage /></GuestOnlyRoute> },
-    { path: "/live-threats", element: <LiveSnapshotPage /> },
+    { path: "/live-threats", element: <Navigate to="/" replace /> },
     {
       path: "/dashboard",
       element: (
         <ProtectedRoute>
-          <AuthenticatedLayout />
+          <ProtectedShell />
         </ProtectedRoute>
       ),
       children: [
-        { index: true, element: <DashboardPage /> },
+        { index: true, element: <DashboardHomeRoute /> },
         {
           path: "network-graph",
           element: (
-            <RoleRoute roles={["customer"]}>
-              <NetworkGraphPage />
-            </RoleRoute>
+            <PlatformFeatureRoute>
+              <RoleRoute roles={["customer"]}>
+                <NetworkGraphPage />
+              </RoleRoute>
+            </PlatformFeatureRoute>
           )
         },
         {
           path: "packets-analysed",
           element: (
-            <RoleRoute roles={["customer"]}>
-              <PacketsAnalysedPage />
-            </RoleRoute>
+            <PlatformFeatureRoute>
+              <RoleRoute roles={["customer", "admin"]}>
+                <PacketsAnalysedPage />
+              </RoleRoute>
+            </PlatformFeatureRoute>
           )
         },
         {
           path: "alerts",
           element: (
-            <RoleRoute roles={["customer"]}>
-              <AlertsPage />
-            </RoleRoute>
+            <PlatformFeatureRoute>
+              <RoleRoute roles={["customer"]}>
+                <AlertsPage />
+              </RoleRoute>
+            </PlatformFeatureRoute>
           )
         },
         {
           path: "active-threats",
           element: (
-            <RoleRoute roles={["customer"]}>
-              <ActiveThreatsPage />
-            </RoleRoute>
+            <PlatformFeatureRoute>
+              <RoleRoute roles={["customer"]}>
+                <ActiveThreatsPage />
+              </RoleRoute>
+            </PlatformFeatureRoute>
           )
         },
         {
           path: "mttr",
           element: (
-            <RoleRoute roles={["admin"]}>
-              <MttrPage />
-            </RoleRoute>
+            <PlatformFeatureRoute>
+              <RoleRoute roles={["admin"]}>
+                <MttrPage />
+              </RoleRoute>
+            </PlatformFeatureRoute>
           )
         },
         {
           path: "ml-confidence",
           element: (
-            <RoleRoute roles={["admin"]}>
-              <MlConfidencePage />
-            </RoleRoute>
+            <PlatformFeatureRoute>
+              <RoleRoute roles={["admin"]}>
+                <MlConfidencePage />
+              </RoleRoute>
+            </PlatformFeatureRoute>
           )
         },
         {
           path: "security-posture",
           element: (
-            <RoleRoute roles={["admin"]}>
-              <SecurityPosturePage />
-            </RoleRoute>
+            <PlatformFeatureRoute>
+              <RoleRoute roles={["admin"]}>
+                <SecurityPosturePage />
+              </RoleRoute>
+            </PlatformFeatureRoute>
           )
         },
         {
           path: "devices",
           element: (
-            <RoleRoute roles={["customer"]}>
-              <DevicesPage />
-            </RoleRoute>
+            <PlatformFeatureRoute>
+              <RoleRoute roles={["customer"]}>
+                <DevicesPage />
+              </RoleRoute>
+            </PlatformFeatureRoute>
           )
         },
         {
           path: "admin/users",
           element: (
-            <RoleRoute roles={["admin"]}>
-              <AdminUsersPage />
-            </RoleRoute>
+            <PlatformFeatureRoute>
+              <RoleRoute roles={["admin"]}>
+                <AdminUsersPage />
+              </RoleRoute>
+            </PlatformFeatureRoute>
           )
         },
         {
           path: "admin/roles",
           element: (
-            <RoleRoute roles={["admin"]}>
-              <AdminRolesPage />
-            </RoleRoute>
+            <PlatformFeatureRoute>
+              <RoleRoute roles={["admin"]}>
+                <AdminRolesPage />
+              </RoleRoute>
+            </PlatformFeatureRoute>
           )
         },
         { path: "settings", element: <SettingsPrivacyPage /> },

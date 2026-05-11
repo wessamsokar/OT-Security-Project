@@ -16,7 +16,7 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.core.security import get_password_hash
 from app.db.session import SessionLocal
-from app.models.user import User, UserRole
+from app.models.user import OnboardingStatus, User, UserRole
 
 settings = get_settings()
 configure_logging()
@@ -69,6 +69,10 @@ def _bootstrap_admin_user() -> None:
             is_active=True,
             is_email_verified=True,
             email_verified_at=datetime.utcnow(),
+            is_admin_approved=True,
+            admin_approved_at=datetime.utcnow(),
+            onboarding_status=OnboardingStatus.approved,
+            rejected_at=None,
         )
         db.add(admin)
         db.commit()

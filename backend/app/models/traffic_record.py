@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -31,7 +31,16 @@ class TrafficRecord(Base):
     ingestion_source: Mapped[str] = mapped_column(String(32), nullable=False, default="json")
     metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default={})
 
+    device_id: Mapped[int | None] = mapped_column(
+        ForeignKey("devices.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     risk_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ml_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ml_alert_severity: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    ml_attack_detected: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     attack_class: Mapped[str | None] = mapped_column(String(64), nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     explanation_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)

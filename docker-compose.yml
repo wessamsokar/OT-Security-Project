@@ -74,6 +74,8 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_ALGORITHM: ${JWT_ALGORITHM}
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES}
+      # docker-entrypoint.sh: avoid concurrent alembic with backend on compose up
+      SKIP_ALEMBIC: "1"
     depends_on:
       redis:
         condition: service_healthy

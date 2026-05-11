@@ -52,17 +52,31 @@ def clean_db(db_session):
 
 @pytest.fixture
 def user1_token(db_session):
-    u1 = User(username="user1", email="u1@example.com", hashed_password="123", role=UserRole.viewer)
+    u1 = User(
+        username="user1",
+        email="u1@example.com",
+        hashed_password="123",
+        role=UserRole.viewer,
+        is_admin_approved=True,
+    )
     db_session.add(u1)
     db_session.commit()
-    return create_access_token(subject=u1.username)
+    db_session.refresh(u1)
+    return create_access_token(subject=str(u1.id))
 
 @pytest.fixture
 def user2_token(db_session):
-    u2 = User(username="user2", email="u2@example.com", hashed_password="123", role=UserRole.viewer)
+    u2 = User(
+        username="user2",
+        email="u2@example.com",
+        hashed_password="123",
+        role=UserRole.viewer,
+        is_admin_approved=True,
+    )
     db_session.add(u2)
     db_session.commit()
-    return create_access_token(subject=u2.username)
+    db_session.refresh(u2)
+    return create_access_token(subject=str(u2.id))
 
 
 def test_device_crud_flow(client, user1_token):
@@ -74,7 +88,9 @@ def test_device_crud_flow(client, user1_token):
         "serial_number": "SN100"
     }, headers={"Authorization": f"Bearer {user1_token}"})
     assert create_resp.status_code == 201
-    device_id = create_resp.json()["id"]
+    created = create_resp.json()
+    device_id = created["id"]
+    assert created.get("monitoring_status") == "offline"
 
     # 2. Get Device
     get_resp = client.get(f"/api/v1/devices/{device_id}", headers={"Authorization": f"Bearer {user1_token}"})

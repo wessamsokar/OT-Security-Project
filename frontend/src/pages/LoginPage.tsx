@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { forgotPassword, loginUser, resetPassword, verifyEmail } from "../api/authApi";
@@ -12,7 +12,7 @@ export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
-  const tokenFromLink = params.get("token") ?? "";
+  const tokenFromLink = useMemo(() => (params.get("token") ?? "").trim(), [params]);
   const initialMode = useMemo(() => {
     if (location.pathname === "/reset-password") return "reset";
     if (location.pathname === "/verify-email") return "verify";
@@ -26,14 +26,24 @@ export function LoginPage() {
   const [submitError, setSubmitError] = useState("");
   const [resetToken, setResetToken] = useState(tokenFromLink);
   const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+
+  useEffect(() => {
+    setResetToken(tokenFromLink);
+  }, [tokenFromLink]);
   const [authInfo, setAuthInfo] = useState("");
 
   const errors = useMemo(() => {
     return {
-      email: email && email.trim().length < 3 ? "Please enter your username." : "",
+      email: email && email.trim().length < 3 ? "Please enter your email or username." : "",
       password: password && password.length < 3 ? "Password must be at least 3 characters." : ""
     };
   }, [email, password]);
+
+  const pendingApprovalBanner = useMemo(() => {
+    const st = location.state as { pendingAdminApproval?: boolean } | null | undefined;
+    return Boolean(st?.pendingAdminApproval);
+  }, [location.state]);
 
   const pageCopy = useMemo(() => {
     if (mode === "forgot") {
@@ -45,7 +55,7 @@ export function LoginPage() {
     if (mode === "reset") {
       return {
         title: "Reset password",
-        subtitle: "Set your new password to restore access to your account."
+        subtitle: "Set a new password for your account."
       };
     }
     if (mode === "verify") {
@@ -101,19 +111,29 @@ export function LoginPage() {
   };
 
   const onResetPassword = async () => {
-    if (!resetToken.trim() || newPassword.length < 8) {
-      setSubmitError("Enter a valid token and a new password (min 8 chars).");
+    const token = tokenFromLink;
+    if (!token) {
+      setSubmitError("This page needs the reset link from your email. Use Forgot password to get a new link.");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setSubmitError("Password must be at least 8 characters.");
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setSubmitError("Passwords do not match.");
       return;
     }
     setIsSubmitting(true);
     setSubmitError("");
     setAuthInfo("");
     try {
-      const result = await resetPassword(resetToken.trim(), newPassword);
+      const result = await resetPassword(token, newPassword);
       setAuthInfo(result.message);
       setMode("login");
-      setResetToken("");
       setNewPassword("");
+      setConfirmNewPassword("");
+      navigate("/login");
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "Unable to reset password right now.");
     } finally {
@@ -122,15 +142,16 @@ export function LoginPage() {
   };
 
   const onVerifyEmail = async () => {
-    if (!resetToken.trim()) {
-      setSubmitError("Enter verification token first.");
+    const token = tokenFromLink || resetToken.trim();
+    if (!token) {
+      setSubmitError("Open this page from the link in your verification email.");
       return;
     }
     setIsSubmitting(true);
     setSubmitError("");
     setAuthInfo("");
     try {
-      const result = await verifyEmail(resetToken.trim());
+      const result = await verifyEmail(token);
       setAuthInfo(result.message);
       setMode("login");
       setResetToken("");
@@ -155,10 +176,15 @@ export function LoginPage() {
             onSubmit={onSubmit}
             noValidate
           >
+            {pendingApprovalBanner ? (
+              <p className="rounded-xl border border-brand/35 bg-brand/10 px-4 py-3 text-sm leading-relaxed text-brand">
+                Your registration is saved. An administrator must approve your account before you can sign in.
+              </p>
+            ) : null}
             <InputField
               id="email"
-              label="Username"
-              placeholder="admin"
+              label="Email or username"
+              placeholder="you@company.com"
               value={email}
               onChange={setEmail}
               error={errors.email}
@@ -238,23 +264,37 @@ export function LoginPage() {
             transition={{ duration: 0.25 }}
             className="space-y-4"
           >
-            <InputField
-              id="reset-token"
-              label="Reset Token"
-              value={resetToken}
-              onChange={setResetToken}
-              placeholder="Token from reset email"
-            />
+            {!tokenFromLink ? (
+              <p className="rounded-xl border border-danger/35 bg-danger/10 px-4 py-3 text-sm leading-relaxed text-danger">
+                This page must be opened from the button in your reset email. Request a new link from Forgot password on
+                the login screen.
+              </p>
+            ) : null}
             <InputField
               id="new-password"
               label="New password"
               type="password"
               value={newPassword}
               onChange={setNewPassword}
-              placeholder="Enter new password"
+              placeholder="Enter new password (min 8 characters)"
+            />
+            <InputField
+              id="confirm-new-password"
+              label="Confirm password"
+              type="password"
+              value={confirmNewPassword}
+              onChange={setConfirmNewPassword}
+              placeholder="Re-enter new password"
             />
             {submitError ? <p className="text-sm text-danger">{submitError}</p> : null}
-            <Button type="button" onClick={onResetPassword} loading={isSubmitting} className="w-full" size="lg">
+            <Button
+              type="button"
+              onClick={onResetPassword}
+              loading={isSubmitting}
+              className="w-full"
+              size="lg"
+              disabled={!tokenFromLink}
+            >
               Reset password
             </Button>
             <button
@@ -280,15 +320,28 @@ export function LoginPage() {
             transition={{ duration: 0.25 }}
             className="space-y-4"
           >
-            <InputField
-              id="verify-token"
-              label="Verification Token"
-              value={resetToken}
-              onChange={setResetToken}
-              placeholder="Token from verification email"
-            />
+            {tokenFromLink ? (
+              <p className="text-sm text-muted">
+                Your verification link is ready. Tap the button below to confirm your email — no token to copy.
+              </p>
+            ) : (
+              <InputField
+                id="verify-token"
+                label="Verification token"
+                value={resetToken}
+                onChange={setResetToken}
+                placeholder="Only if you do not have the email link"
+              />
+            )}
             {submitError ? <p className="text-sm text-danger">{submitError}</p> : null}
-            <Button type="button" onClick={onVerifyEmail} loading={isSubmitting} className="w-full" size="lg">
+            <Button
+              type="button"
+              onClick={onVerifyEmail}
+              loading={isSubmitting}
+              className="w-full"
+              size="lg"
+              disabled={!tokenFromLink && !resetToken.trim()}
+            >
               Verify email
             </Button>
             <button

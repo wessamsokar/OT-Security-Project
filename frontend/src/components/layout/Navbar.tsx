@@ -5,8 +5,9 @@ import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { Logo } from "./Logo";
 import { Button } from "../ui/Button";
+import { useOptionalOnboardingAccess } from "../../contexts/OnboardingAccessContext";
 import { clearAuthSession, getAuthSession, getUserRole, hasRole, isAuthenticated } from "../../lib/authSession";
-import { PUBLIC_NAV_ITEMS, TOP_NAV_ITEMS } from "../../lib/navigation";
+import { navItemVisibleWhenPending, PUBLIC_NAV_ITEMS, TOP_NAV_ITEMS } from "../../lib/navigation";
 
 function getUserDisplayName() {
   const session = getAuthSession();
@@ -36,6 +37,7 @@ export function Navbar({ onNavItemClick, onSidebarToggle, isSidebarOpen = false 
   const [displayName, setDisplayName] = useState<string>(getUserDisplayName());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const role = getUserRole();
+  const pendingShell = useOptionalOnboardingAccess()?.status === "pending";
 
   useEffect(() => {
     const sync = () => {
@@ -79,7 +81,9 @@ export function Navbar({ onNavItemClick, onSidebarToggle, isSidebarOpen = false 
         <nav className="hidden items-center gap-7 text-sm text-muted md:flex">
           {authed ? (
             <>
-              {TOP_NAV_ITEMS.filter((item) => !item.roles || (role ? hasRole(item.roles) : false)).map((item) => (
+              {TOP_NAV_ITEMS.filter((item) => !item.roles || (role ? hasRole(item.roles) : false))
+                .filter((item) => navItemVisibleWhenPending(item, pendingShell))
+                .map((item) => (
                 <motion.div
                   key={item.to}
                   whileHover={{
@@ -245,7 +249,9 @@ export function Navbar({ onNavItemClick, onSidebarToggle, isSidebarOpen = false 
               <div className="space-y-1">
                 {authed ? (
                   <>
-                    {TOP_NAV_ITEMS.filter((item) => !item.roles || (role ? hasRole(item.roles) : false)).map((item) => (
+                    {TOP_NAV_ITEMS.filter((item) => !item.roles || (role ? hasRole(item.roles) : false))
+                      .filter((item) => navItemVisibleWhenPending(item, pendingShell))
+                      .map((item) => (
                       <NavLink
                         key={item.to}
                         to={item.to}

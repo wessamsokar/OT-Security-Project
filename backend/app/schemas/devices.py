@@ -32,6 +32,21 @@ class DeviceResponse(DeviceBase):
     user_id: int
     created_at: datetime
     updated_at: datetime
+    last_ml_risk_score: float | None = None
+    last_ml_status: str | None = None
+    monitoring_status: str = "offline"
+    last_traffic_at: datetime | None = None
+    last_seen_traffic_id: int | None = None
 
     class Config:
         from_attributes = True
+
+
+class ReconcileTrafficResponse(BaseModel):
+    """POST /devices/{id}/reconcile-traffic"""
+
+    linked_records: int
+
+
+class OfflineSweepResponse(BaseModel):
+    devices_marked_offline: int

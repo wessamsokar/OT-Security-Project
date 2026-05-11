@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -45,6 +46,24 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = 120
 
     packet_capture_dir: str = "./captures"
+
+    #: Mark OT devices offline if no qualifying traffic observation within this window (minutes).
+    device_offline_after_minutes: int = 60
+
+    @field_validator("smtp_username", "smtp_from_email", "smtp_host", mode="before")
+    @classmethod
+    def strip_optional_smtp_strings(cls, v: object) -> object:
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+    @field_validator("smtp_password", mode="before")
+    @classmethod
+    def normalize_smtp_app_password(cls, v: object) -> object:
+        # Gmail app passwords are often pasted as "xxxx xxxx xxxx xxxx"; SMTP auth needs the 16 chars without spaces.
+        if isinstance(v, str):
+            return "".join(v.split())
+        return v
 
     @property
     def cors_origins_list(self) -> list[str]:

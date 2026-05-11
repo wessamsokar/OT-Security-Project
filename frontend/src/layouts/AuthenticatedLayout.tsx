@@ -5,19 +5,25 @@ import { NavLink, Outlet } from "react-router-dom";
 
 import { Logo } from "../components/layout/Logo";
 import { Navbar } from "../components/layout/Navbar";
+import { AccessRejectedPage } from "../pages/AccessRejectedPage";
+import { useOnboardingAccess } from "../contexts/OnboardingAccessContext";
 import { getUserRole, hasRole } from "../lib/authSession";
-import { SIDEBAR_SECTIONS } from "../lib/navigation";
+import { navItemVisibleWhenPending, SIDEBAR_SECTIONS } from "../lib/navigation";
 
 export function AuthenticatedLayout() {
+	const { status, isLoading } = useOnboardingAccess();
 	const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => {
 		if (typeof window === "undefined") return false;
 		return localStorage.getItem("ics_sidebar_open") === "true";
 	});
 	const toggleSidebar = () => setIsSidebarOpen((prev) => !prev);
 	const role = getUserRole();
+	const pendingShell = status === "pending";
 	const sections = SIDEBAR_SECTIONS.map((section) => ({
 		...section,
-		items: section.items.filter((item) => !item.roles || hasRole(item.roles))
+		items: section.items
+			.filter((item) => !item.roles || hasRole(item.roles))
+			.filter((item) => navItemVisibleWhenPending(item, pendingShell))
 	})).filter((section) => section.items.length > 0);
 
 	useEffect(() => {
@@ -25,6 +31,23 @@ export function AuthenticatedLayout() {
 			localStorage.setItem("ics_sidebar_open", isSidebarOpen ? "true" : "false");
 		}
 	}, [isSidebarOpen]);
+
+	if (status === "rejected") {
+		return <AccessRejectedPage />;
+	}
+
+	if (isLoading) {
+		return (
+			<div className="min-h-screen bg-transparent text-text">
+				<Navbar onNavItemClick={() => setIsSidebarOpen(true)} onSidebarToggle={toggleSidebar} isSidebarOpen={isSidebarOpen} />
+				<div className="mx-auto flex max-w-7xl px-4 pb-8 pt-28 md:px-8">
+					<div className="flex min-h-[50vh] flex-1 items-center justify-center rounded-3xl border border-white/10 bg-panel/25 px-6 text-sm text-muted">
+						Verifying your account status…
+					</div>
+				</div>
+			</div>
+		);
+	}
 
 	return (
 		<div className="min-h-screen bg-transparent text-text">

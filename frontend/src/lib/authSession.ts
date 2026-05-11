@@ -1,4 +1,4 @@
-import type { AuthApiResponse } from "../types/auth";
+import type { AuthApiResponse, OnboardingStatus } from "../types/auth";
 
 const SESSION_KEY = "ot_sentinel_auth_session";
 
@@ -11,6 +11,7 @@ type AuthSession = {
     email: string;
     fullName?: string;
     role?: UserRole;
+    onboardingStatus?: OnboardingStatus;
   };
 };
 
@@ -28,6 +29,21 @@ export function saveAuthSession(response: AuthApiResponse) {
 
   localStorage.setItem(SESSION_KEY, JSON.stringify(session));
   notifyAuthChange();
+}
+
+/** Merge user fields without dispatching auth-changed (used after silent `/auth/me` sync). */
+export function patchAuthSessionUser(partial: Partial<AuthSession["user"]>): void {
+  const session = getAuthSession();
+  if (!session) return;
+  const next: AuthSession = {
+    ...session,
+    user: { ...session.user, ...partial }
+  };
+  localStorage.setItem(SESSION_KEY, JSON.stringify(next));
+}
+
+export function syncAuthSessionFromMe(payload: AuthSession["user"]): void {
+  patchAuthSessionUser(payload);
 }
 
 export function getAuthSession(): AuthSession | null {
@@ -73,6 +89,14 @@ export function getUserRole(): UserRole | null {
   // Backward compatibility for older persisted sessions.
   if (role === "analyst" || role === "viewer") {
     return "customer";
+  }
+  return null;
+}
+
+export function getStoredOnboardingStatus(): OnboardingStatus | null {
+  const s = getAuthSession()?.user?.onboardingStatus;
+  if (s === "pending" || s === "approved" || s === "rejected") {
+    return s;
   }
   return null;
 }

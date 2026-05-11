@@ -35,7 +35,7 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from engine.ndr_engine import NDREngine
 
@@ -181,6 +181,11 @@ class BatchResponse(BaseModel):
 
 
 class InferRequest(BaseModel):
+    """
+    Backward-compatible contract from the platform backend. Converted to the
+    same NetworkFlow field names as POST /predict (duration, sPackets, protocol, …).
+    """
+
     packet_count: int = Field(ge=1)
     bytes_in: int = Field(ge=0)
     bytes_out: int = Field(ge=0)
@@ -188,11 +193,30 @@ class InferRequest(BaseModel):
     payload_entropy: float = Field(ge=0, le=8)
     source_port: int = Field(ge=1, le=65535)
     destination_port: int = Field(ge=1, le=65535)
-    modbus_function_code: int | None = Field(default=0, ge=0, le=255)
-    modbus_unit_id: int | None = Field(default=0, ge=0, le=255)
-    dnp3_function_code: int | None = Field(default=0, ge=0, le=255)
-    iec104_type_id: int | None = Field(default=0, ge=0, le=255)
-    transport_protocol: str = Field(pattern="^(tcp|udp|icmp)$")
+    modbus_function_code: int = Field(default=0, ge=0, le=255)
+    modbus_unit_id: int = Field(default=0, ge=0, le=255)
+    dnp3_function_code: int = Field(default=0, ge=0, le=255)
+    iec104_type_id: int = Field(default=0, ge=0, le=255)
+    transport_protocol: str
+    source_ip: str | None = Field(default=None, max_length=256)
+    destination_ip: str | None = Field(default=None, max_length=256)
+
+    @field_validator("modbus_function_code", "modbus_unit_id", "dnp3_function_code", "iec104_type_id", mode="before")
+    @classmethod
+    def ics_null_as_zero(cls, v: object) -> int:
+        if v is None or v == "":
+            return 0
+        return int(v)  # type: ignore[arg-type]
+
+    @field_validator("transport_protocol", mode="before")
+    @classmethod
+    def normalize_protocol(cls, v: object) -> str:
+        if not isinstance(v, str):
+            raise ValueError("transport_protocol must be a string")
+        s = v.lower().strip()
+        if s not in ("tcp", "udp", "icmp"):
+            raise ValueError("transport_protocol must be one of: tcp, udp, icmp")
+        return s
 
 
 class RetrainRequest(BaseModel):
@@ -201,32 +225,73 @@ class RetrainRequest(BaseModel):
 
 
 def _convert_infer_to_flow(payload: InferRequest) -> Dict[str, Any]:
+    """
+    Map the platform JSON contract to the same row shape as POST /predict
+    (NetworkFlow: duration, sPackets, sBytesSum, protocol, sAddress, …) plus
+    ICS / entropy / ports so feature engineering matches training & /predict.
+    """
     duration_seconds = max(payload.duration_ms / 1000.0, 0.001)
     total_bytes = payload.bytes_in + payload.bytes_out
+    pc = max(int(payload.packet_count), 1)
+    proto = payload.transport_protocol
 
-    return {
+    src = (payload.source_ip or "").strip()
+    dst = (payload.destination_ip or "").strip()
+
+    flow: Dict[str, Any] = {
         "duration": round(duration_seconds, 6),
-        "sPackets": payload.packet_count,
-        "rPackets": max(1, int(payload.packet_count * 0.1)),
+        "sPackets": pc,
+        "rPackets": max(1, int(pc * 0.1)),
         "sBytesSum": float(payload.bytes_out),
         "rBytesSum": float(payload.bytes_in),
         "sLoad": float(payload.bytes_out * 8.0 / duration_seconds),
         "rLoad": float(payload.bytes_in * 8.0 / duration_seconds),
         "sSynRate": 0.0,
-        "sAckRate": 1.0 if payload.transport_protocol == "tcp" else 0.2,
+        "sAckRate": 1.0 if proto == "tcp" else 0.2,
         "sFinRate": 0.0,
         "sRstRate": 0.0,
-        "sPayloadAvg": float(total_bytes / max(payload.packet_count, 1)),
-        "rPayloadAvg": float(payload.bytes_in / max(payload.packet_count, 1)),
-        "protocol": payload.transport_protocol,
-        "sAddress": "0.0.0.0",
+        "sPayloadAvg": float(total_bytes / pc),
+        "rPayloadAvg": float(payload.bytes_in / pc),
+        "protocol": proto,
+        "sAddress": src if src else "0.0.0.0",
+        "payload_entropy": float(payload.payload_entropy),
+        "source_port": int(payload.source_port),
+        "destination_port": int(payload.destination_port),
+        "modbus_function_code": int(payload.modbus_function_code),
+        "modbus_unit_id": int(payload.modbus_unit_id),
+        "dnp3_function_code": int(payload.dnp3_function_code),
+        "iec104_type_id": int(payload.iec104_type_id),
     }
+    if dst:
+        flow["rAddress"] = dst
+    return flow
 
 
-def _normalize_backend_contract(result: Dict[str, Any]) -> Dict[str, Any]:
-    raw_attack = str(result.get("attack", "UNKNOWN")).upper()
+def _engine_label(result: Dict[str, Any]) -> str:
+    if "attack" in result and result["attack"] is not None:
+        return str(result["attack"])
+    if "label" in result and result["label"] is not None:
+        return str(result["label"])
+    return ""
+
+
+def _engine_severity_to_alert_severity(result: Dict[str, Any]) -> str:
+    """Single mapping: engine tier → platform alert_severity (lowercase)."""
+    sev = str(result.get("severity", "LOW")).upper()
+    if sev == "CRITICAL":
+        return "critical"
+    if sev == "HIGH":
+        return "high"
+    if sev == "MEDIUM":
+        return "medium"
+    return "low"
+
+
+def _attack_class_from_engine_label(raw_attack_upper: str) -> str:
+    """Taxonomy for platform storage — defined only in ML service (Option A)."""
     attack_map = {
         "BENIGN": "normal",
+        "NORMAL": "normal",
         "UNKNOWN": "scan",
         "SUSPICIOUS": "scan",
         "ACKFLOOD": "dos",
@@ -237,45 +302,141 @@ def _normalize_backend_contract(result: Dict[str, Any]) -> Dict[str, Any]:
         "PORTSCAN": "scan",
         "NMAP": "scan",
         "WINNUKE": "command_injection",
+        "ERROR": "unknown_degraded",
+    }
+    return attack_map.get(raw_attack_upper, "scan")
+
+
+def _derive_ml_status_from_engine(result: Dict[str, Any]) -> str:
+    """
+    Map engine output → platform ml_status.
+    Never returns 'normal' for ERROR — caller must short-circuit to unknown_degraded first.
+    """
+    sev = str(result.get("severity", "LOW")).upper()
+    raw = str(_engine_label(result) or "UNKNOWN").upper()
+    benign = raw in ("BENIGN", "NORMAL")
+    is_anomaly = bool(result.get("is_anomaly", False))
+
+    if sev == "CRITICAL":
+        return "under_attack"
+    if not benign and sev == "HIGH":
+        return "under_attack"
+    if sev == "MEDIUM" or raw == "SUSPICIOUS" or is_anomaly:
+        return "suspicious"
+    if sev == "HIGH" and benign:
+        return "suspicious"
+    return "normal"
+
+
+def _canonical_degraded_infer_response(result: Dict[str, Any], reason: str) -> Dict[str, Any]:
+    """
+    Explicit failure contract — NOT coerced to benign normal.
+    Backend stores this verbatim.
+    """
+    explanation = {
+        "method": "smartgrid_infer",
+        "evaluation_failed": True,
+        "failure_reason": reason,
+        "engine_attack": result.get("attack") or result.get("label"),
+        "engine_severity": result.get("severity"),
+        "detected_by": result.get("detected_by", "unknown"),
+        "group": result.get("group", "UNKNOWN"),
+    }
+    return {
+        "risk_score": None,
+        "ml_status": "unknown_degraded",
+        "alert_severity": "high",
+        "attack_detected": True,
+        "attack_class": "unknown_degraded",
+        "confidence": 0.0,
+        "model_version": "smartgrid-v2.1",
+        "explanation": explanation,
     }
 
-    confidence = float(result.get("confidence", 0.0))
-    if confidence > 1.0:
-        confidence = confidence / 100.0
-    confidence = min(max(confidence, 0.0), 1.0)
 
-    risk_score = float(result.get("risk_score", 0.0))
-    if risk_score > 1.0:
-        risk_score = risk_score / 100.0
-    risk_score = min(max(risk_score, 0.0), 1.0)
+def _merge_infer_engine_row(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Bridge engine keys — does NOT inject fake benign risk/confidence defaults."""
+    out = {k: v for k, v in raw.items() if v is not None}
+    if "attack" not in out and "label" in raw and raw["label"] is not None:
+        out["attack"] = raw["label"]
+    if not out.get("timestamp"):
+        out["timestamp"] = datetime.utcnow().isoformat()
+    return out
+
+
+def canonical_infer_contract(result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Mandatory platform contract for POST /infer.
+    All verdict fields are finalized here — backend persists without reinterpretation.
+
+    Canonical keys:
+      risk_score (float 0–1 or null),
+      ml_status,
+      alert_severity,
+      attack_detected,
+      attack_class,
+      confidence,
+      model_version,
+      explanation
+    """
+    label_raw = (_engine_label(result) or "").strip()
+    raw_attack = label_raw.upper() if label_raw else "UNKNOWN"
+
+    if raw_attack == "ERROR" or str(result.get("group", "")).upper() == "ERROR":
+        return _canonical_degraded_infer_response(result, "engine_emitted_error_label")
+
+    if not label_raw:
+        return _canonical_degraded_infer_response(result, "missing_attack_label_after_inference")
+
+    # numeric fields — require presence for trustworthy scores (else degraded)
+    try:
+        risk_raw = result.get("risk_score")
+        conf_raw = result.get("confidence")
+        if risk_raw is None or conf_raw is None:
+            return _canonical_degraded_infer_response(result, "missing_risk_score_or_confidence")
+
+        confidence = float(conf_raw)
+        if confidence > 1.0:
+            confidence = confidence / 100.0
+        confidence = min(max(confidence, 0.0), 1.0)
+
+        risk_score = float(risk_raw)
+        if risk_score > 1.0:
+            risk_score = risk_score / 100.0
+        risk_score = min(max(risk_score, 0.0), 1.0)
+    except (TypeError, ValueError):
+        return _canonical_degraded_infer_response(result, "non_numeric_risk_or_confidence")
+
+    ml_status = _derive_ml_status_from_engine(result)
+    alert_severity = _engine_severity_to_alert_severity(result)
+
+    raw_attack_upper = raw_attack
+    attack_class = _attack_class_from_engine_label(raw_attack_upper)
+
+    attack_detected = ml_status in ("suspicious", "under_attack")
 
     explanation = {
-        "method": "smartgrid_external_engine",
+        "method": "smartgrid_infer",
         "top_features": [
-            {
-                "feature": "recon_error",
-                "value": float(result.get("recon_error", 0.0)),
-                "importance": 0.5,
-            },
-            {
-                "feature": "xgb_conf",
-                "value": float(result.get("xgb_conf", 0.0)),
-                "importance": 0.3,
-            },
-            {
-                "feature": "ae_conf",
-                "value": float(result.get("ae_conf", 0.0)),
-                "importance": 0.2,
-            },
+            {"feature": "recon_error", "value": float(result.get("recon_error", 0.0)), "importance": 0.5},
+            {"feature": "xgb_conf", "value": float(result.get("xgb_conf", 0.0)), "importance": 0.3},
+            {"feature": "ae_conf", "value": float(result.get("ae_conf", 0.0)), "importance": 0.2},
         ],
         "detected_by": result.get("detected_by", "unknown"),
         "group": result.get("group", "UNKNOWN"),
         "severity": result.get("severity", "LOW"),
+        "ml_status": ml_status,
+        "alert_severity": alert_severity,
+        "attack_detected": attack_detected,
+        "evaluation_failed": False,
     }
 
     return {
         "risk_score": round(risk_score, 4),
-        "attack_class": attack_map.get(raw_attack, "scan"),
+        "ml_status": ml_status,
+        "alert_severity": alert_severity,
+        "attack_detected": bool(attack_detected),
+        "attack_class": attack_class,
         "confidence": round(confidence, 4),
         "model_version": "smartgrid-v2.1",
         "explanation": explanation,
@@ -468,11 +629,16 @@ async def infer(payload: InferRequest) -> Dict[str, Any]:
     try:
         flow = _convert_infer_to_flow(payload)
         raw = engine.predict_json(flow)
-        safe = _safe_result(raw)
-        return _normalize_backend_contract(safe)
+        merged = _merge_infer_engine_row(raw if isinstance(raw, dict) else {})
+        return canonical_infer_contract(merged)
+    except HTTPException:
+        raise
     except Exception as exc:
-        logger.error("Compatibility infer error: %s", exc)
-        raise HTTPException(status_code=500, detail="Infer failed. Check server logs.")
+        logger.error("Infer error: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Inference unavailable: {exc!s}",
+        ) from exc
 
 
 # ── Predict (batch) ──────────────────────────────────────────

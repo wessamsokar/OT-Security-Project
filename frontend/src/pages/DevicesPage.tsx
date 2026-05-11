@@ -1,48 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { OtTrafficSourceModal } from "../components/devices/OtTrafficSourceModal";
+import {
+  buildMetadataPayload,
+  defaultOtTrafficSourceForm,
+  formValuesFromDevice,
+  OT_META,
+  parseAdvancedMetadataJson,
+  resolveMonitoringBadge,
+  type OtTrafficSourceFormValues
+} from "../components/devices/otAssetMetadata";
 import { createDevice, deleteDevice, fetchDevices, updateDevice, type DeviceResponse } from "../api/devicesApi";
 import { Button } from "../components/ui/Button";
-import { InputField } from "../components/ui/InputField";
-
-type DeviceFormState = {
-  name: string;
-  deviceType: string;
-  ipAddress: string;
-  serialNumber: string;
-  location: string;
-  metadataJson: string;
-  isActive: boolean;
-};
-
-const emptyForm: DeviceFormState = {
-  name: "",
-  deviceType: "",
-  ipAddress: "",
-  serialNumber: "",
-  location: "",
-  metadataJson: "{}",
-  isActive: true
-};
-
-function parseMetadata(raw: string): Record<string, unknown> | null {
-  if (!raw.trim()) {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
 
 export function DevicesPage() {
   const [devices, setDevices] = useState<DeviceResponse[]>([]);
-  const [form, setForm] = useState<DeviceFormState>(emptyForm);
+  const [form, setForm] = useState<OtTrafficSourceFormValues>(() => defaultOtTrafficSourceForm());
   const [showFormModal, setShowFormModal] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -80,15 +53,22 @@ export function DevicesPage() {
 
   const handleSubmit = async () => {
     if (!form.name.trim()) {
-      setFormError("Device name is required.");
+      setFormError("Asset name is required.");
       return;
     }
 
-    const metadata = parseMetadata(form.metadataJson);
-    if (!metadata) {
-      setFormError("Metadata must be valid JSON.");
+    let extraAdvanced: Record<string, unknown> | undefined;
+    try {
+      const parsed = parseAdvancedMetadataJson(form.advancedMetadataJson);
+      extraAdvanced = Object.keys(parsed).length > 0 ? parsed : undefined;
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Invalid advanced metadata.");
       return;
     }
+
+    const metadata = buildMetadataPayload(form, {
+      extraAdvanced
+    });
 
     setSaving(true);
     setFormError("");
@@ -96,10 +76,10 @@ export function DevicesPage() {
       if (isEditing && editingId !== null) {
         const updated = await updateDevice(editingId, {
           name: form.name.trim(),
-          device_type: form.deviceType.trim() || null,
+          device_type: form.assetType.trim() || null,
           ip_address: form.ipAddress.trim() || null,
-          serial_number: form.serialNumber.trim() || null,
-          location: form.location.trim() || null,
+          serial_number: null,
+          location: form.siteLocation.trim() || null,
           metadata_json: metadata,
           is_active: form.isActive
         });
@@ -107,21 +87,21 @@ export function DevicesPage() {
       } else {
         const created = await createDevice({
           name: form.name.trim(),
-          device_type: form.deviceType.trim() || null,
+          device_type: form.assetType.trim() || null,
           ip_address: form.ipAddress.trim() || null,
-          serial_number: form.serialNumber.trim() || null,
-          location: form.location.trim() || null,
+          serial_number: null,
+          location: form.siteLocation.trim() || null,
           metadata_json: metadata,
           is_active: form.isActive
         });
         setDevices((prev) => [created, ...prev]);
       }
 
-      setForm(emptyForm);
+      setForm(defaultOtTrafficSourceForm());
       setEditingId(null);
       setShowFormModal(false);
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Unable to save device.");
+      setFormError(err instanceof Error ? err.message : "Unable to save traffic source.");
     } finally {
       setSaving(false);
     }
@@ -130,100 +110,122 @@ export function DevicesPage() {
   const handleEdit = (device: DeviceResponse) => {
     setEditingId(device.id);
     setFormError("");
-    setForm({
-      name: device.name ?? "",
-      deviceType: device.device_type ?? "",
-      ipAddress: device.ip_address ?? "",
-      serialNumber: device.serial_number ?? "",
-      location: device.location ?? "",
-      metadataJson: JSON.stringify(device.metadata_json ?? {}, null, 2),
-      isActive: device.is_active
-    });
+    setForm(formValuesFromDevice(device));
     setShowFormModal(true);
   };
 
   const handleDelete = async (deviceId: number) => {
-    const confirmDelete = window.confirm("Delete this device?");
+    const confirmDelete = window.confirm("Remove this traffic source from monitoring inventory?");
     if (!confirmDelete) return;
 
     try {
       await deleteDevice(deviceId);
       setDevices((prev) => prev.filter((row) => row.id !== deviceId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to delete device.");
+      setError(err instanceof Error ? err.message : "Unable to delete traffic source.");
     }
+  };
+
+  const closeModal = () => {
+    setShowFormModal(false);
+    setFormError("");
+    setEditingId(null);
+    setForm(defaultOtTrafficSourceForm());
   };
 
   return (
     <section className="rounded-3xl border border-white/10 bg-panel/45 p-6 shadow-panel">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.16em] text-brand">Devices</p>
-          <h1 className="mt-2 text-2xl font-semibold text-white">Device Inventory</h1>
-          <p className="mt-1 text-sm text-muted">Manage the OT devices assigned to your workspace.</p>
+          <p className="text-xs uppercase tracking-[0.16em] text-brand">Traffic sources</p>
+          <h1 className="mt-2 text-2xl font-semibold text-white">OT asset inventory</h1>
+          <p className="mt-1 text-sm text-muted">
+            Register industrial assets as monitored traffic sources for protocol-aware telemetry and ML attack detection.
+          </p>
         </div>
         <Button
           onClick={() => {
             setEditingId(null);
-            setForm(emptyForm);
+            setForm(defaultOtTrafficSourceForm());
             setFormError("");
             setShowFormModal(true);
           }}
         >
-          Add device
+          Register OT traffic source
         </Button>
       </div>
 
-      {loading ? <p className="text-sm text-muted">Loading devices...</p> : null}
+      {loading ? <p className="text-sm text-muted">Loading traffic sources…</p> : null}
       {error ? <p className="text-sm text-danger">{error}</p> : null}
 
       <div className="overflow-x-auto rounded-2xl border border-white/10">
         <table className="min-w-full text-left text-sm">
           <thead className="bg-white/5 text-muted">
             <tr>
-              <th className="px-4 py-3">Device</th>
+              <th className="px-4 py-3">Asset</th>
               <th className="px-4 py-3">Type</th>
               <th className="px-4 py-3">IP</th>
-              <th className="px-4 py-3">Location</th>
-              <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Site / zone</th>
+              <th className="px-4 py-3">Monitoring</th>
               <th className="px-4 py-3">Updated</th>
               <th className="px-4 py-3">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {tableRows.map((device) => (
-              <tr key={device.id} className="border-t border-white/10">
-                <td className="px-4 py-3 text-white">{device.name}</td>
-                <td className="px-4 py-3 text-muted">{device.device_type ?? "-"}</td>
-                <td className="px-4 py-3 text-muted">{device.ip_address ?? "-"}</td>
-                <td className="px-4 py-3 text-muted">{device.location ?? "-"}</td>
-                <td className="px-4 py-3">
-                  <span
-                    className={[
-                      "inline-flex rounded-full px-2 py-0.5 text-xs",
-                      device.is_active ? "bg-emerald-500/20 text-emerald-300" : "bg-rose-500/20 text-rose-300"
-                    ].join(" ")}
-                  >
-                    {device.is_active ? "active" : "inactive"}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-muted">{new Date(device.updated_at).toLocaleString()}</td>
-                <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => handleEdit(device)}>
-                      Edit
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => handleDelete(device.id)}>
-                      Delete
-                    </Button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {tableRows.map((device) => {
+              const badge = resolveMonitoringBadge(device);
+              const meta =
+                device.metadata_json && typeof device.metadata_json === "object"
+                  ? (device.metadata_json as Record<string, unknown>)
+                  : {};
+              const proto = typeof meta[OT_META.protocol] === "string" ? (meta[OT_META.protocol] as string) : "";
+
+              return (
+                <tr key={device.id} className="border-t border-white/10">
+                  <td className="px-4 py-3 text-white">{device.name}</td>
+                  <td className="px-4 py-3 text-muted">{device.device_type ?? "-"}</td>
+                  <td className="px-4 py-3 text-muted">
+                    {device.ip_address ?? "-"}{" "}
+                    {proto ? (
+                      <span className="ml-1 inline-block rounded border border-white/10 bg-white/[0.04] px-1.5 py-px text-[10px] text-muted">
+                        {proto.replace(/_/g, " ")}
+                      </span>
+                    ) : null}
+                  </td>
+                  <td className="px-4 py-3 text-muted">{device.location ?? "-"}</td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={[
+                        "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium",
+                        badge.className
+                      ].join(" ")}
+                    >
+                      {badge.label}
+                    </span>
+                    {device.last_ml_risk_score != null ? (
+                      <span className="mt-1 block text-[10px] text-muted">
+                        ML risk {(device.last_ml_risk_score * 100).toFixed(0)}%
+                      </span>
+                    ) : null}
+                  </td>
+                  <td className="px-4 py-3 text-muted">{new Date(device.updated_at).toLocaleString()}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="ghost" size="sm" onClick={() => handleEdit(device)}>
+                        Edit
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => handleDelete(device.id)}>
+                        Delete
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
             {!loading && !tableRows.length ? (
               <tr className="border-t border-white/10">
                 <td className="px-4 py-3 text-muted" colSpan={7}>
-                  No devices found yet.
+                  No monitored traffic sources yet. Register one to begin OT telemetry ingestion.
                 </td>
               </tr>
             ) : null}
@@ -231,103 +233,26 @@ export function DevicesPage() {
         </table>
       </div>
 
-      {showFormModal ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-3xl rounded-2xl border border-white/10 bg-[#0d1732] p-4 shadow-panel md:p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-white">{isEditing ? "Edit device" : "Add device"}</h2>
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setShowFormModal(false);
-                  setFormError("");
-                  if (!isEditing) {
-                    setForm(emptyForm);
-                  }
-                }}
-              >
-                Close
-              </Button>
-            </div>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className="space-y-3">
-                <InputField
-                  id="device-name"
-                  label="Device name"
-                  value={form.name}
-                  onChange={(value) => setForm((prev) => ({ ...prev, name: value }))}
-                  placeholder="PLC-01"
-                />
-                <InputField
-                  id="device-type"
-                  label="Device type"
-                  value={form.deviceType}
-                  onChange={(value) => setForm((prev) => ({ ...prev, deviceType: value }))}
-                  placeholder="PLC, RTU, HMI"
-                />
-                <InputField
-                  id="device-ip"
-                  label="IP address"
-                  value={form.ipAddress}
-                  onChange={(value) => setForm((prev) => ({ ...prev, ipAddress: value }))}
-                  placeholder="10.0.1.12"
-                />
-                <InputField
-                  id="device-serial"
-                  label="Serial number"
-                  value={form.serialNumber}
-                  onChange={(value) => setForm((prev) => ({ ...prev, serialNumber: value }))}
-                  placeholder="SN-4829"
-                />
-                <InputField
-                  id="device-location"
-                  label="Location"
-                  value={form.location}
-                  onChange={(value) => setForm((prev) => ({ ...prev, location: value }))}
-                  placeholder="Plant A - Line 3"
-                />
-              </div>
-              <div className="space-y-3">
-                <label className="block">
-                  <span className="mb-2 block text-sm text-muted">Metadata (JSON)</span>
-                  <textarea
-                    rows={8}
-                    value={form.metadataJson}
-                    onChange={(event) => setForm((prev) => ({ ...prev, metadataJson: event.target.value }))}
-                    className="w-full rounded-xl border border-white/15 bg-[#0c152d]/80 px-3 py-3 text-sm text-text outline-none transition placeholder:text-muted/70 focus:border-brand/70 focus:ring-2 focus:ring-brand/20"
-                  />
-                </label>
-                <label className="flex items-center gap-2 text-sm text-muted">
-                  <input
-                    type="checkbox"
-                    checked={form.isActive}
-                    onChange={(event) => setForm((prev) => ({ ...prev, isActive: event.target.checked }))}
-                    className="h-4 w-4 rounded border-white/20 bg-white/10 text-brand"
-                  />
-                  Active device
-                </label>
-                {formError ? <p className="text-sm text-danger">{formError}</p> : null}
-                <div className="flex flex-wrap gap-2">
-                  <Button onClick={handleSubmit} loading={saving}>
-                    {isEditing ? "Update device" : "Add device"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setShowFormModal(false);
-                      setFormError("");
-                      setEditingId(null);
-                      setForm(emptyForm);
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <OtTrafficSourceModal
+        open={showFormModal}
+        isEditing={isEditing}
+        mlSnapshot={
+          isEditing && editingId !== null
+            ? (() => {
+                const d = devices.find((x) => x.id === editingId);
+                return d
+                  ? { last_ml_risk_score: d.last_ml_risk_score, last_ml_status: d.last_ml_status }
+                  : undefined;
+              })()
+            : undefined
+        }
+        form={form}
+        setForm={setForm}
+        saving={saving}
+        formError={formError}
+        onSubmit={handleSubmit}
+        onClose={closeModal}
+      />
     </section>
   );
 }

@@ -4,19 +4,23 @@ import type { AlertResponse } from "../api/alertsApi";
 import type { DeviceResponse } from "../api/devicesApi";
 import type { TrafficRecordResponse } from "../api/trafficApi";
 import {
+  approveOnboardingRegistration,
   createUser,
   deleteUser,
+  fetchUser,
   fetchUserAlerts,
   fetchUserDevices,
   fetchUserIncidents,
   fetchUserThreats,
   fetchUserTraffic,
   fetchUsers,
+  rejectOnboardingRegistration,
   updateUser,
   type ActiveThreatResponse,
   type IncidentResponse,
   type UserAdminResponse
 } from "../api/usersApi";
+import { formatIndustry } from "../lib/industryOptions";
 import { Button } from "../components/ui/Button";
 import { InputField } from "../components/ui/InputField";
 
@@ -44,8 +48,15 @@ export function AdminUsersPage() {
   const [editRole, setEditRole] = useState<"admin" | "customer">("customer");
   const [editActive, setEditActive] = useState(true);
   const [editEmailVerified, setEditEmailVerified] = useState(false);
+  const [newAdminApproved, setNewAdminApproved] = useState(true);
+  const [editAdminApproved, setEditAdminApproved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  /** Onboarding / registration review modal (opened from Verify). */
+  const [reviewUser, setReviewUser] = useState<UserAdminResponse | null>(null);
+  const [reviewOpeningId, setReviewOpeningId] = useState<number | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [reviewError, setReviewError] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -74,6 +85,37 @@ export function AdminUsersPage() {
   const loadUsers = async (search?: string) => {
     const rows = await fetchUsers(search);
     setUsers(rows);
+  };
+
+  function onboardingBadgeClass(status: UserAdminResponse["onboarding_status"]): string {
+    if (status === "approved") return "rounded-md border border-emerald-500/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300";
+    if (status === "rejected") return "rounded-md border border-red-500/45 bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-300";
+    return "rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300";
+  }
+
+  const openRegistrationReview = async (userRow: UserAdminResponse) => {
+    setRejectReason("");
+    setReviewError("");
+    setError("");
+    setReviewOpeningId(userRow.id);
+    setReviewUser(userRow);
+    try {
+      const fresh = await fetchUser(userRow.id);
+      setReviewUser(fresh);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unable to load user profile.";
+      setReviewError(msg);
+      setError(msg);
+      setReviewUser(null);
+    } finally {
+      setReviewOpeningId(null);
+    }
+  };
+
+  const closeReview = () => {
+    setReviewUser(null);
+    setRejectReason("");
+    setReviewError("");
   };
 
   const loadUserDetails = async (userId: number) => {
@@ -111,13 +153,15 @@ export function AdminUsersPage() {
         username: newUsername.trim(),
         email: newEmail.trim(),
         password: newPassword,
-        role: newRole
+        role: newRole,
+        is_admin_approved: newAdminApproved
       });
       await loadUsers();
       setNewUsername("");
       setNewEmail("");
       setNewPassword("");
       setNewRole("customer");
+      setNewAdminApproved(true);
       setIsAddUserOpen(false);
       setError("");
     } catch (err) {
@@ -159,6 +203,7 @@ export function AdminUsersPage() {
     setEditRole(user.role);
     setEditActive(user.is_active);
     setEditEmailVerified(user.is_email_verified);
+    setEditAdminApproved(user.is_admin_approved);
     setModalMode("edit");
     setError("");
   };
@@ -187,6 +232,7 @@ export function AdminUsersPage() {
         role: editRole,
         is_active: editActive,
         is_email_verified: editEmailVerified,
+        is_admin_approved: editAdminApproved,
         password: editPassword ? editPassword : undefined
       });
       await loadUsers(query.trim() || undefined);
@@ -204,7 +250,9 @@ export function AdminUsersPage() {
       <div className="mb-6">
         <p className="text-xs uppercase tracking-[0.16em] text-brand">Admin</p>
         <h1 className="mt-2 text-2xl font-semibold text-white">User Access Control</h1>
-        <p className="mt-1 text-sm text-muted">Assign roles to platform users and manage access levels.</p>
+        <p className="mt-1 text-sm text-muted">
+          Assign roles and approve self-registered accounts before they can sign in.
+        </p>
       </div>
 
       {loading ? <p className="text-sm text-muted">Loading roles...</p> : null}
@@ -269,9 +317,36 @@ export function AdminUsersPage() {
               {users.map((user) => (
                 <div key={user.id} className="rounded-lg border border-white/10 bg-white/5 p-3 text-xs text-muted">
                   <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex shrink-0 items-center justify-start">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        loading={reviewOpeningId === user.id}
+                        className="!border-[#722f37]/80 !bg-gradient-to-r !from-[#6b1528] !to-[#5c121f] !text-white shadow-md hover:!brightness-110 focus-visible:!ring-[#9f1239]/60"
+                        onClick={() => void openRegistrationReview(user)}
+                      >
+                        Verify
+                      </Button>
+                    </div>
                     <div className="flex-1 text-center">
                       <p className="text-sm text-white">{user.username}</p>
                       <p className="text-xs text-muted">{user.email}</p>
+                      <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+                        <span className={onboardingBadgeClass(user.onboarding_status)}>
+                          {user.onboarding_status === "pending"
+                            ? "Pending verification"
+                            : user.onboarding_status === "approved"
+                              ? "Approved"
+                              : "Rejected"}
+                        </span>
+                        {user.is_email_verified ? (
+                          <span className="rounded-md border border-sky-500/35 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-300">
+                            Email OK
+                          </span>
+                        ) : (
+                          <span className="text-[10px] uppercase tracking-wide text-muted">Email unverified</span>
+                        )}
+                      </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Button size="sm" variant="ghost" onClick={() => openViewModal(user)}>View</Button>
@@ -342,6 +417,15 @@ export function AdminUsersPage() {
                   <option value="admin">admin</option>
                 </select>
               </label>
+              <label className="flex items-center gap-2 text-sm text-muted md:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={newAdminApproved}
+                  onChange={(event) => setNewAdminApproved(event.target.checked)}
+                  className="h-4 w-4 rounded border-white/20 bg-white/10 text-brand"
+                />
+                <span className="text-white">Approved — user can sign in immediately</span>
+              </label>
             </div>
 
             {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
@@ -355,6 +439,7 @@ export function AdminUsersPage() {
                   setNewEmail("");
                   setNewPassword("");
                   setNewRole("customer");
+                  setNewAdminApproved(true);
                   setError("");
                 }}
               >
@@ -392,6 +477,16 @@ export function AdminUsersPage() {
                     <p className="mt-2 text-white">Role: {selectedUser.role}</p>
                     <p className="text-white">Active: {String(selectedUser.is_active)}</p>
                     <p className="text-white">Email verified: {String(selectedUser.is_email_verified)}</p>
+                    <p className="text-white">
+                      Onboarding: {selectedUser.onboarding_status}
+                      {selectedUser.rejected_at ? ` (rejected ${new Date(selectedUser.rejected_at).toLocaleString()})` : ""}
+                    </p>
+                    <p className="text-white">
+                      Admin approved: {String(selectedUser.is_admin_approved)}
+                      {selectedUser.admin_approved_at
+                        ? ` (${new Date(selectedUser.admin_approved_at).toLocaleString()})`
+                        : ""}
+                    </p>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-white/5 p-3">
                     <p className="text-xs uppercase tracking-[0.16em] text-muted">Audit</p>
@@ -550,6 +645,15 @@ export function AdminUsersPage() {
                   />
                   <span className="text-white">Email verified</span>
                 </label>
+                <label className="flex items-center gap-2 text-sm text-muted md:col-span-2">
+                  <input
+                    type="checkbox"
+                    checked={editAdminApproved}
+                    onChange={(event) => setEditAdminApproved(event.target.checked)}
+                    className="h-4 w-4 rounded border-white/20 bg-white/10 text-brand"
+                  />
+                  <span className="text-white">Admin approved — user can sign in</span>
+                </label>
               </div>
             )}
 
@@ -561,6 +665,162 @@ export function AdminUsersPage() {
                 <Button variant="outline" onClick={closeUserModal}>Cancel</Button>
               </div>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {reviewUser ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4 backdrop-blur-[1px]">
+          <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-white/10 bg-[#0c152d]/98 p-6 shadow-panel">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.16em] text-brand">Registration review</p>
+                <h2 className="mt-2 text-xl font-semibold text-white">OT access request</h2>
+                <p className="mt-1 text-sm text-muted">Validate organization profile and approve or reject platform access.</p>
+              </div>
+              <Button variant="ghost" size="sm" onClick={closeReview}>Close</Button>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={onboardingBadgeClass(reviewUser.onboarding_status)}>
+                  {reviewUser.onboarding_status === "pending"
+                    ? "Pending verification"
+                    : reviewUser.onboarding_status === "approved"
+                      ? "Approved"
+                      : "Rejected"}
+                </span>
+                {reviewUser.is_email_verified ? (
+                  <span className="rounded-md border border-sky-500/35 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-sky-300">
+                    Email verified
+                  </span>
+                ) : (
+                  <span className="text-xs text-amber-300/90">Work email not verified by admin</span>
+                )}
+              </div>
+
+              {reviewUser.role === "admin" ? (
+                <p className="rounded-xl border border-brand/30 bg-brand/10 px-4 py-3 text-sm text-brand">
+                  This user is an administrator — onboarding approval does not apply.
+                </p>
+              ) : null}
+
+              <div className="grid gap-3 text-sm md:grid-cols-2">
+                {[
+                  ["Full name", reviewUser.username],
+                  ["Company", reviewUser.company_name ?? "—"],
+                  ["Work email", reviewUser.email],
+                  ["Job title", reviewUser.job_title ?? "—"],
+                  ["Industry", formatIndustry(reviewUser.industry_type)],
+                  ["Infrastructure", reviewUser.infrastructure_type ?? "—"],
+                  ["Est. devices", reviewUser.estimated_device_count != null ? String(reviewUser.estimated_device_count) : "—"],
+                  ["Country", reviewUser.country ?? "—"],
+                  [
+                    "Operates OT/ICS",
+                    reviewUser.operates_ot_ics === true ? "Yes" : reviewUser.operates_ot_ics === false ? "No" : "—"
+                  ],
+                  ["Registered", new Date(reviewUser.created_at).toLocaleString()],
+                  ["Role", reviewUser.role]
+                ].map(([k, v]) => (
+                  <div key={String(k)} className="rounded-xl border border-white/10 bg-white/5 p-3">
+                    <p className="text-[10px] uppercase tracking-wide text-muted">{k}</p>
+                    <p className="mt-1 break-words text-white">{v}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                <p className="text-[10px] uppercase tracking-wide text-muted">Purpose of access</p>
+                <p className="mt-2 whitespace-pre-wrap break-words text-sm text-muted">{reviewUser.purpose_of_access ?? "—"}</p>
+              </div>
+
+              <div>
+                <span className="mb-2 block text-xs text-muted">Rejection notice (optional — included in email)</span>
+                <textarea
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  rows={3}
+                  placeholder="Infrastructure scope not supported, incomplete verification, ..."
+                  className="w-full rounded-xl border border-white/15 bg-[#0c152d]/80 px-3 py-2 text-sm text-text outline-none focus:border-brand/60"
+                />
+              </div>
+
+              {reviewError ? <p className="text-sm text-danger">{reviewError}</p> : null}
+
+              <div className="flex flex-wrap gap-2 border-t border-white/10 pt-4">
+                {!reviewUser.is_email_verified ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    loading={saving}
+                    onClick={async () => {
+                      setSaving(true);
+                      setReviewError("");
+                      try {
+                        await updateUser(reviewUser.id, { is_email_verified: true });
+                        const f = await fetchUser(reviewUser.id);
+                        setReviewUser(f);
+                        await loadUsers(query.trim() || undefined);
+                      } catch (err) {
+                        setReviewError(err instanceof Error ? err.message : "Unable to verify email.");
+                      } finally {
+                        setSaving(false);
+                      }
+                    }}
+                  >
+                    Mark work email verified
+                  </Button>
+                ) : null}
+                {reviewUser.role !== "admin" ? (
+                  <>
+                    <Button
+                      size="sm"
+                      loading={saving}
+                      disabled={reviewUser.onboarding_status === "approved"}
+                      onClick={async () => {
+                        setSaving(true);
+                        setReviewError("");
+                        try {
+                          await approveOnboardingRegistration(reviewUser.id);
+                          await loadUsers(query.trim() || undefined);
+                          closeReview();
+                        } catch (err) {
+                          setReviewError(err instanceof Error ? err.message : "Unable to approve.");
+                        } finally {
+                          setSaving(false);
+                        }
+                      }}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="!border-red-500/50 !text-red-300 hover:!bg-red-500/10"
+                      loading={saving}
+                      disabled={reviewUser.onboarding_status === "rejected"}
+                      onClick={async () => {
+                        const ok = window.confirm("Reject this registration? The user cannot sign in.");
+                        if (!ok) return;
+                        setSaving(true);
+                        setReviewError("");
+                        try {
+                          await rejectOnboardingRegistration(reviewUser.id, rejectReason.trim() || undefined);
+                          await loadUsers(query.trim() || undefined);
+                          closeReview();
+                        } catch (err) {
+                          setReviewError(err instanceof Error ? err.message : "Unable to reject.");
+                        } finally {
+                          setSaving(false);
+                        }
+                      }}
+                    >
+                      Reject
+                    </Button>
+                  </>
+                ) : null}
+                <Button variant="ghost" size="sm" onClick={closeReview}>Cancel</Button>
+              </div>
+            </div>
           </div>
         </div>
       ) : null}

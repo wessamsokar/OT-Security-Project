@@ -17,7 +17,7 @@ if errorlevel 1 (
 )
 echo.
 echo [INFO ] Project is running.
-echo [INFO ] Type q then press Enter to stop all containers and close.
+echo [INFO ] Type q then press Enter to STOP containers (images stay cached).
 :wait_for_q
 set "USER_INPUT="
 set /p USER_INPUT="> "
@@ -26,12 +26,12 @@ echo [INFO ] Unknown input. Type q to stop.
 goto wait_for_q
 
 :shutdown
-echo [STOP ] Shutting down containers...
-docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+echo [STOP ] Stopping containers (compose stop — images/volumes untouched)...
+docker compose -f docker-compose.yml -f docker-compose.dev.yml stop
 if errorlevel 1 (
     echo [WARN ] Some services may still be running. Check with: docker compose ps
 )
-echo [DONE ] Project stopped.
+echo [DONE ] Containers stopped.
 exit /b 0
 
 :header
