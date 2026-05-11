@@ -1,34 +1,19 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.alert import Alert, AlertSeverity
-from app.models.incident import Incident, IncidentStatus
 from app.models.traffic_record import TrafficRecord
-from app.schemas.alerts import ActiveThreatResponse, DashboardSummary, PublicLiveSnapshotResponse
+from app.schemas.alerts import ActiveThreatResponse, PublicLiveSnapshotResponse
+from app.services.dashboard_summary import build_dashboard_summary
 
 router = APIRouter(prefix="/public", tags=["public"])
 
 
 @router.get("/live-snapshot", response_model=PublicLiveSnapshotResponse)
 def live_snapshot(db: Session = Depends(get_db)) -> PublicLiveSnapshotResponse:
-    total_records = db.query(func.count(TrafficRecord.id)).scalar() or 0
-    total_alerts = db.query(func.count(Alert.id)).scalar() or 0
-    incidents_open = (
-        db.query(func.count(Incident.id)).filter(Incident.status != IncidentStatus.resolved).scalar() or 0
-    )
-    avg_risk = db.query(func.avg(TrafficRecord.risk_score)).scalar() or 0.0
-
-    class_rows = (
-        db.query(TrafficRecord.attack_class, func.count(TrafficRecord.id))
-        .filter(TrafficRecord.attack_class.isnot(None))
-        .group_by(TrafficRecord.attack_class)
-        .all()
-    )
-
     active_rows = (
         db.query(Alert, TrafficRecord)
         .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
@@ -50,13 +35,7 @@ def live_snapshot(db: Session = Depends(get_db)) -> PublicLiveSnapshotResponse:
             )
         )
 
-    dashboard = DashboardSummary(
-        total_records=total_records,
-        total_alerts=total_alerts,
-        incidents_open=incidents_open,
-        avg_risk_score=float(avg_risk),
-        class_distribution={label: count for label, count in class_rows},
-    )
+    dashboard = build_dashboard_summary(db, None, public_mode=True)
 
     return PublicLiveSnapshotResponse(
         dashboard=dashboard,

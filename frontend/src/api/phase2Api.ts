@@ -35,12 +35,15 @@ export type MttrSummary = {
   incidents: MttrIncident[];
 };
 
-export type SecurityPosture = {
-  system_uptime: string;
-  blocked_ips_today: number;
-  failed_logins: number;
-  model_drift: string;
-  incidents_open: number;
+export type SocHealthPayload = {
+  window_hours: number;
+  traffic_flows_in_window: number;
+  ml_status_counts: Record<string, number>;
+  traffic_attack_detected_count: number;
+  alerts_severity_counts: Record<string, number>;
+  devices_registered: number;
+  monitoring_status_counts: Record<string, number>;
+  avg_last_ml_risk_score: number | null;
 };
 
 export async function fetchActiveThreats(): Promise<ActiveThreat[]> {
@@ -58,7 +61,7 @@ export async function fetchMttr(): Promise<MttrSummary> {
   return response.data;
 }
 
-export async function fetchSecurityPosture(): Promise<SecurityPosture> {
-  const response = await apiClient.get<SecurityPosture>("/v1/model/security-posture");
+export async function fetchSocHealth(): Promise<SocHealthPayload> {
+  const response = await apiClient.get<SocHealthPayload>("/v1/model/soc-health");
   return response.data;
 }

@@ -3,6 +3,13 @@ import { Navigate, useLocation, useRoutes } from "react-router-dom";
 
 import { OnboardingAccessProvider, useOnboardingAccess } from "../contexts/OnboardingAccessContext";
 import { hasRole, isAuthenticated } from "../lib/authSession";
+
+function InventoryLegacyRedirect() {
+  if (hasRole("customer")) {
+    return <Navigate to="/dashboard/inventory" replace />;
+  }
+  return <Navigate to="/dashboard" replace />;
+}
 import { AuthenticatedLayout } from "../layouts/AuthenticatedLayout";
 import { ActiveThreatsPage } from "../pages/ActiveThreatsPage";
 import { AlertsPage } from "../pages/AlertsPage";
@@ -15,12 +22,12 @@ import { LoginPage } from "../pages/LoginPage";
 import { MlConfidencePage } from "../pages/MlConfidencePage";
 import { MttrPage } from "../pages/MttrPage";
 import { HomePage } from "../pages/HomePage";
-import { NetworkGraphPage } from "../pages/NetworkGraphPage";
+import { OtInventoryPage } from "../pages/OtInventoryPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { PacketsAnalysedPage } from "../pages/PacketsAnalysedPage";
 import { ProfilePage } from "../pages/ProfilePage";
 import { RegisterPage } from "../pages/RegisterPage";
-import { SecurityPosturePage } from "../pages/SecurityPosturePage";
+import { SocHealthPage } from "../pages/SocHealthPage";
 import { SettingsPrivacyPage } from "../pages/SettingsPrivacyPage";
 
 const pageVariants = {
@@ -107,12 +114,13 @@ function AnimatedRoutes() {
       ),
       children: [
         { index: true, element: <DashboardHomeRoute /> },
+        { path: "network-graph", element: <InventoryLegacyRedirect /> },
         {
-          path: "network-graph",
+          path: "inventory",
           element: (
             <PlatformFeatureRoute>
               <RoleRoute roles={["customer"]}>
-                <NetworkGraphPage />
+                <OtInventoryPage />
               </RoleRoute>
             </PlatformFeatureRoute>
           )
@@ -167,12 +175,13 @@ function AnimatedRoutes() {
             </PlatformFeatureRoute>
           )
         },
+        { path: "security-posture", element: <Navigate to="/dashboard/soc-health" replace /> },
         {
-          path: "security-posture",
+          path: "soc-health",
           element: (
             <PlatformFeatureRoute>
-              <RoleRoute roles={["admin"]}>
-                <SecurityPosturePage />
+              <RoleRoute roles={["admin", "customer"]}>
+                <SocHealthPage />
               </RoleRoute>
             </PlatformFeatureRoute>
           )

@@ -7,7 +7,6 @@ import {
   BrainCircuit,
   Clock3,
   Network,
-  Settings2,
   Shield,
   ShieldCheck,
   Users
@@ -41,27 +40,27 @@ export const TOP_NAV_ITEMS: NavItem[] = [
 
 export const SIDEBAR_SECTIONS: NavSection[] = [
   {
-    title: "Overview",
+    title: "SOC",
     items: [
       { to: "/dashboard", label: "Dashboard", icon: ShieldCheck, roles: ALL_ROLES, allowPending: true },
       { to: "/dashboard/active-threats", label: "Active Threats", icon: AlertTriangle, roles: ["customer"] },
-      { to: "/dashboard/alerts", label: "Alerts", icon: Bell, roles: ["customer"] }
+      { to: "/dashboard/alerts", label: "Alerts", icon: Bell, roles: ["customer"] },
+      { to: "/dashboard/devices", label: "Devices", icon: Activity, roles: ["customer"] }
     ]
   },
   {
     title: "Operations",
     items: [
-      { to: "/dashboard/network-graph", label: "Network Graph", icon: Network, roles: ["customer"] },
-      { to: "/dashboard/devices", label: "Devices", icon: Activity, roles: ["customer"] },
-      { to: "/dashboard/packets-analysed", label: "Packets Analysed", icon: BarChart3, roles: ALL_ROLES }
+      { to: "/dashboard/inventory", label: "OT Inventory", icon: Network, roles: ["customer"] },
+      { to: "/dashboard/packets-analysed", label: "Traffic Telemetry", icon: BarChart3, roles: ALL_ROLES },
+      { to: "/dashboard/mttr", label: "MTTR", icon: Clock3, roles: ALL_ROLES }
     ]
   },
   {
     title: "Analytics",
     items: [
-      { to: "/dashboard/mttr", label: "MTTR", icon: Clock3, roles: ["admin"] },
-      { to: "/dashboard/ml-confidence", label: "ML Confidence", icon: BrainCircuit, roles: ["admin"] },
-      { to: "/dashboard/security-posture", label: "Security Posture", icon: Shield, roles: ["admin"] }
+      { to: "/dashboard/soc-health", label: "SOC Health", icon: Shield, roles: ALL_ROLES },
+      { to: "/dashboard/ml-confidence", label: "ML Operations", icon: BrainCircuit, roles: ["admin"] }
     ]
   },
   {
@@ -69,12 +68,6 @@ export const SIDEBAR_SECTIONS: NavSection[] = [
     items: [
       { to: "/dashboard/admin/users", label: "Users", icon: Users, roles: ["admin"] },
       { to: "/dashboard/admin/roles", label: "Roles", icon: ShieldCheck, roles: ["admin"] }
-    ]
-  },
-  {
-    title: "Settings",
-    items: [
-      { to: "/dashboard/settings", label: "Settings & Privacy", icon: Settings2, roles: ALL_ROLES, allowPending: true }
     ]
   }
 ];

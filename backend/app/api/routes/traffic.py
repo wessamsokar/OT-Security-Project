@@ -1,17 +1,19 @@
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import require_roles
 from app.models.alert import Alert
+from app.models.device import Device
 from app.models.model_version import ModelVersion
 from app.models.traffic_record import TrafficRecord
 from app.models.user import UserRole
 from app.schemas.traffic import (
     DetectionResponse,
     ICSTrafficIn,
+    InventoryEdgeResponse,
     PacketsByHourResponse,
     PacketsByHourRow,
     TrafficRecordResponse,
@@ -245,3 +247,61 @@ def packets_by_hour(
         peak_hour=peak_hour,
         rows=rows,
     )
+
+
+@router.get("/inventory-edges", response_model=list[InventoryEdgeResponse])
+def inventory_edges(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.admin, UserRole.customer)),
+    hours: int = Query(168, ge=1, le=720),
+) -> list[InventoryEdgeResponse]:
+    """
+    Flow aggregates between two devices when both endpoints map to inventory IPs
+    for the same traffic owner. Not a full topology — only observed IP pairs.
+    """
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    d_q = db.query(Device).filter(Device.ip_address.isnot(None))
+    if not _is_admin(current_user):
+        d_q = d_q.filter(Device.user_id == current_user.id)
+    devices = d_q.all()
+    by_id = {d.id: d for d in devices}
+    ipkey_to_id: dict[tuple[int, str], int] = {}
+    for d in devices:
+        if d.ip_address:
+            ipkey_to_id[(d.user_id, d.ip_address.strip())] = d.id
+
+    rec_q = db.query(TrafficRecord).filter(
+        TrafficRecord.created_at >= since,
+        TrafficRecord.device_id.isnot(None),
+    )
+    if not _is_admin(current_user):
+        rec_q = rec_q.filter(TrafficRecord.user_id == current_user.id)
+
+    edge_counts: dict[tuple[int, int], int] = defaultdict(int)
+    for r in rec_q.all():
+        uid = r.user_id
+        if uid is None:
+            continue
+        d = by_id.get(r.device_id)
+        if not d or not d.ip_address:
+            continue
+        dip = d.ip_address.strip()
+        sip, rip = r.source_ip.strip(), r.destination_ip.strip()
+        peer_ip: str | None = None
+        if dip == sip:
+            peer_ip = rip
+        elif dip == rip:
+            peer_ip = sip
+        else:
+            continue
+        peer_id = ipkey_to_id.get((uid, peer_ip))
+        if peer_id is None or peer_id == r.device_id:
+            continue
+        a, b = sorted((r.device_id, peer_id))
+        edge_counts[(a, b)] += int(r.packet_count)
+
+    return [
+        InventoryEdgeResponse(device_a_id=a, device_b_id=b, packet_count=cnt)
+        for (a, b), cnt in sorted(edge_counts.items(), key=lambda x: (-x[1], x[0][0], x[0][1]))
+    ]

@@ -100,3 +100,18 @@ export async function runDetection(recordId: number): Promise<DetectionResponse>
     throw parseTrafficApiError(error, "Unable to run ML detection on this record.");
   }
 }
+
+export type InventoryEdge = {
+  device_a_id: number;
+  device_b_id: number;
+  packet_count: number;
+};
+
+export async function fetchInventoryEdges(hours = 168): Promise<InventoryEdge[]> {
+  try {
+    const response = await apiClient.get<InventoryEdge[]>("/v1/traffic/inventory-edges", { params: { hours } });
+    return response.data;
+  } catch (error) {
+    throw parseTrafficApiError(error, "Unable to load inventory flow edges.");
+  }
+}

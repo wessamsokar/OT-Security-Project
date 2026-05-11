@@ -1,7 +1,6 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import require_roles
@@ -17,6 +16,7 @@ from app.schemas.alerts import (
     MttrIncidentResponse,
     MttrSummaryResponse,
 )
+from app.services.dashboard_summary import build_dashboard_summary
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
@@ -41,41 +41,7 @@ def dashboard(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> DashboardSummary:
-    records_query = db.query(TrafficRecord)
-    alerts_query = db.query(Alert).join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
-    incidents_query = (
-        db.query(Incident)
-        .join(Alert, Alert.id == Incident.alert_id)
-        .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
-        .filter(Incident.status != IncidentStatus.resolved)
-    )
-    avg_query = db.query(func.avg(TrafficRecord.risk_score))
-
-    if not _is_admin(current_user):
-        records_query = records_query.filter(TrafficRecord.user_id == current_user.id)
-        alerts_query = alerts_query.filter(TrafficRecord.user_id == current_user.id)
-        incidents_query = incidents_query.filter(TrafficRecord.user_id == current_user.id)
-        avg_query = avg_query.filter(TrafficRecord.user_id == current_user.id)
-
-    total_records = records_query.with_entities(func.count(TrafficRecord.id)).scalar() or 0
-    total_alerts = alerts_query.with_entities(func.count(Alert.id)).scalar() or 0
-    incidents_open = incidents_query.with_entities(func.count(Incident.id)).scalar() or 0
-    avg_risk = avg_query.scalar() or 0.0
-
-    class_query = db.query(TrafficRecord.attack_class, func.count(TrafficRecord.id)).filter(
-        TrafficRecord.attack_class.isnot(None)
-    )
-    if not _is_admin(current_user):
-        class_query = class_query.filter(TrafficRecord.user_id == current_user.id)
-    class_rows = class_query.group_by(TrafficRecord.attack_class).all()
-
-    return DashboardSummary(
-        total_records=total_records,
-        total_alerts=total_alerts,
-        incidents_open=incidents_open,
-        avg_risk_score=float(avg_risk),
-        class_distribution={label: count for label, count in class_rows},
-    )
+    return build_dashboard_summary(db, current_user)
 
 
 @router.get("/active-threats", response_model=list[ActiveThreatResponse])

@@ -41,9 +41,12 @@ export function MttrPage() {
 
   return (
     <section className="rounded-3xl border border-white/10 bg-panel/45 p-6 shadow-panel">
-      <p className="text-xs uppercase tracking-[0.16em] text-brand">Mttr Page</p>
+      <p className="text-xs uppercase tracking-[0.16em] text-brand">Operations</p>
       <h1 className="mt-2 text-2xl font-semibold text-white">MTTR</h1>
-      <p className="mt-1 text-sm text-muted">Mean Time To Respond for incidents in the current monitoring window.</p>
+      <p className="mt-1 text-sm text-muted">
+        Incident response KPIs from stored incidents (mean time to respond). Does not indicate detection quality or ML
+        performance.
+      </p>
 
       {loading ? <p className="mt-4 text-sm text-muted">Loading MTTR...</p> : null}
       {error ? <p className="mt-4 text-sm text-danger">{error}</p> : null}

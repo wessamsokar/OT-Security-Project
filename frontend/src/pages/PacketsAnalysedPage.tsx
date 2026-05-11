@@ -41,9 +41,11 @@ export function PacketsAnalysedPage() {
 
   return (
     <section className="rounded-3xl border border-white/10 bg-panel/45 p-6 shadow-panel">
-      <p className="text-xs uppercase tracking-[0.16em] text-brand">Packet Page</p>
-      <h1 className="mt-2 text-2xl font-semibold text-white">Packets Analysed</h1>
-      <p className="mt-1 text-sm text-muted">Detailed packet processing volume for the authenticated user workspace.</p>
+      <p className="text-xs uppercase tracking-[0.16em] text-brand">Telemetry</p>
+      <h1 className="mt-2 text-2xl font-semibold text-white">Traffic telemetry</h1>
+      <p className="mt-1 text-sm text-muted">
+        Ingested volume and protocol mix (last 24h). Operations signal only — not ML verdicts or threat inference.
+      </p>
 
       {loading ? <p className="mt-4 text-sm text-muted">Loading packets analytics...</p> : null}
       {error ? <p className="mt-4 text-sm text-danger">{error}</p> : null}

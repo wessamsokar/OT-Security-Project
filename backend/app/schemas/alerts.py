@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.alert import AlertSeverity, AlertStatus
 
@@ -23,6 +23,7 @@ class DashboardSummary(BaseModel):
     incidents_open: int
     avg_risk_score: float
     class_distribution: dict[str, int]
+    ml_status_distribution: dict[str, int] = Field(default_factory=dict)
 
 
 class ActiveThreatResponse(BaseModel):

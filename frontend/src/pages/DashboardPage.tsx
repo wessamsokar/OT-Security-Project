@@ -8,10 +8,10 @@ import { fetchUsers } from "../api/usersApi";
 import { connectAlertsStream } from "../api/streamApi";
 import { getAuthSession, hasRole } from "../lib/authSession";
 
-type TrafficPoint = {
+type MlStatusPoint = {
   label: string;
   value: number;
-  kind: "normal" | "suspicious" | "attack";
+  kind: "attack" | "suspicious" | "neutral" | "muted";
 };
 
 function severityClasses(severity: "High" | "Medium" | "Low") {
@@ -20,17 +20,25 @@ function severityClasses(severity: "High" | "Medium" | "Low") {
   return "bg-emerald-500/20 text-emerald-300";
 }
 
-function trafficClasses(kind: TrafficPoint["kind"]) {
+/** Bar color from persisted ``ml_status`` labels only (explicit contract values). */
+function mlStatusBarClass(kind: MlStatusPoint["kind"]) {
   if (kind === "attack") return "bg-rose-500";
   if (kind === "suspicious") return "bg-amber-500";
+  if (kind === "muted") return "bg-slate-600";
   return "bg-sky-500";
 }
 
-function labelKind(label: string): TrafficPoint["kind"] {
-  const lowered = label.toLowerCase();
-  if (lowered.includes("flood") || lowered.includes("dos") || lowered.includes("attack")) return "attack";
-  if (lowered.includes("scan") || lowered.includes("recon") || lowered.includes("unknown")) return "suspicious";
-  return "normal";
+function mlStatusKindFromLabel(status: string): MlStatusPoint["kind"] {
+  const s = status.toLowerCase();
+  if (s === "under_attack") return "attack";
+  if (s === "suspicious" || s === "unknown_degraded") return "suspicious";
+  if (s === "(no_ml_output)") return "muted";
+  return "neutral";
+}
+
+/** attack_class volume is taxonomy only — single neutral bar color. */
+function volumeBarClass() {
+  return "bg-slate-500";
 }
 
 function logClasses(severity: AlertResponse["severity"]) {
@@ -139,20 +147,31 @@ export function DashboardPage() {
   }, [alerts]);
   const meanRiskPct = ((summary?.avg_risk_score ?? 0) * 100).toFixed(1);
 
-  const trafficSeries: TrafficPoint[] = useMemo(
+  const mlStatusSeries: MlStatusPoint[] = useMemo(
     () =>
-      Object.entries(summary?.class_distribution ?? {})
+      Object.entries(summary?.ml_status_distribution ?? {})
         .sort((a, b) => b[1] - a[1])
         .slice(0, 12)
         .map(([label, value]) => ({
           label,
           value,
-          kind: labelKind(label)
+          kind: mlStatusKindFromLabel(label)
         })),
     [summary]
   );
 
-  const topClasses = trafficSeries.slice(0, 3);
+  const mlMax = useMemo(() => Math.max(1, ...mlStatusSeries.map((p) => p.value)), [mlStatusSeries]);
+
+  const attackClassSeries = useMemo(
+    () =>
+      Object.entries(summary?.class_distribution ?? {})
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 12)
+        .map(([label, value]) => ({ label, value })),
+    [summary]
+  );
+
+  const topAttackClasses = attackClassSeries.slice(0, 3);
 
   return (
     <section className="space-y-5 rounded-3xl border border-white/10 bg-panel/45 p-6 shadow-panel">
@@ -167,7 +186,7 @@ export function DashboardPage() {
               <p className="mt-1 text-sm text-muted">
                 {showAdminInsights
                   ? "Admin control center for users, roles, devices, and platform status."
-                  : "Assigned SOC view with real-time alerts, traffic, tasks, and security posture."}
+                  : "ML-driven SOC view: live alerts, backend risk aggregates, and device state."}
               </p>
             </div>
             <button
@@ -231,10 +250,10 @@ export function DashboardPage() {
                   Manage roles
                 </Link>
                 <Link
-                  to="/dashboard/devices"
+                  to="/dashboard/soc-health"
                   className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white transition hover:bg-white/10"
                 >
-                  Review devices
+                  SOC health
                 </Link>
               </div>
             </article>
@@ -261,26 +280,27 @@ export function DashboardPage() {
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <h2 className="text-lg font-medium text-white">Top Attack Classes</h2>
+              <h2 className="text-lg font-medium text-white">attack_class volume (taxonomy)</h2>
+              <p className="mt-1 text-xs text-muted">Flow counts by stored label — not a substitute for ml_status.</p>
               <div className="mt-3 space-y-2 text-sm">
-                {topClasses.map((entry) => (
+                {topAttackClasses.map((entry) => (
                   <div key={entry.label} className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
                     <span className="text-white">{entry.label}</span>
-                    <span className="text-rose-200">{entry.value} flows</span>
+                    <span className="text-muted">{entry.value} flows</span>
                   </div>
                 ))}
-                {!topClasses.length ? <p className="text-muted">No class data available yet.</p> : null}
+                {!topAttackClasses.length ? <p className="text-muted">No class data available yet.</p> : null}
               </div>
             </article>
             <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <h2 className="text-lg font-medium text-white">Security Posture</h2>
+              <h2 className="text-lg font-medium text-white">ML snapshot (stored flows)</h2>
               <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                 <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                  <p className="text-xs text-muted">Incidents Open</p>
+                  <p className="text-xs text-muted">Incidents open</p>
                   <p className="mt-1 text-white">{summary?.incidents_open ?? 0}</p>
                 </div>
                 <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                  <p className="text-xs text-muted">Avg Risk Score</p>
+                  <p className="text-xs text-muted">Avg risk_score (DB)</p>
                   <p className="mt-1 text-white">{meanRiskPct}%</p>
                 </div>
                 <div className="rounded-xl border border-white/10 bg-background/40 p-3">
@@ -288,8 +308,14 @@ export function DashboardPage() {
                   <p className="mt-1 text-white">{totalAlertsToday}</p>
                 </div>
                 <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                  <p className="text-xs text-muted">Model Drift</p>
-                  <p className="mt-1 text-emerald-200">Monitoring</p>
+                  <p className="text-xs text-muted">Top ml_status</p>
+                  <p className="mt-1 text-white">
+                    {Object.entries(summary?.ml_status_distribution ?? {})
+                      .sort((a, b) => b[1] - a[1])
+                      .slice(0, 2)
+                      .map(([k, v]) => `${k}: ${v}`)
+                      .join(" · ") || "—"}
+                  </p>
                 </div>
               </div>
             </article>
@@ -299,7 +325,7 @@ export function DashboardPage() {
         <>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-wide text-muted">Packets Analysed</p>
+              <p className="text-xs uppercase tracking-wide text-muted">Traffic records</p>
               <p className="mt-2 text-3xl font-semibold text-white">{packetCount.toLocaleString()}</p>
             </article>
             <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -315,27 +341,34 @@ export function DashboardPage() {
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
             <article className="rounded-2xl border border-white/10 bg-white/5 p-4 xl:col-span-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-lg font-medium text-white">Network Traffic (Last 12 Hours)</h2>
-                <div className="flex items-center gap-3 text-xs text-muted">
-                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-sky-500" /> Normal</span>
-                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-500" /> Suspicious</span>
-                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-rose-500" /> Attack</span>
+                <h2 className="text-lg font-medium text-white">ML status distribution (stored flows)</h2>
+                <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
+                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-rose-500" /> under_attack</span>
+                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-500" /> suspicious / unknown_degraded</span>
+                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-sky-500" /> other ML verdict</span>
+                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-slate-600" /> no_ml_output</span>
                 </div>
               </div>
 
               <div className="mt-4 grid grid-cols-12 items-end gap-2">
-                {trafficSeries.map((point) => (
+                {mlStatusSeries.map((point) => (
                   <div key={point.label} className="flex flex-col items-center gap-2">
                     <div className="flex h-36 w-full max-w-8 items-end rounded-sm bg-background/40 p-[2px]">
                       <div
-                        className={`w-full rounded-sm ${trafficClasses(point.kind)}`}
-                        style={{ height: `${Math.max(8, Math.min(100, Math.round((point.value / Math.max(1, packetCount)) * 900)))}%` }}
+                        className={`w-full rounded-sm ${mlStatusBarClass(point.kind)}`}
+                        style={{
+                          height: `${Math.max(8, Math.min(100, Math.round((point.value / mlMax) * 100)))}%`
+                        }}
                       />
                     </div>
-                    <span className="text-[11px] text-muted">{point.label.slice(0, 6)}</span>
+                    <span className="max-w-[4.5rem] truncate text-center text-[11px] text-muted" title={point.label}>
+                      {point.label}
+                    </span>
                   </div>
                 ))}
-                {!trafficSeries.length ? <p className="col-span-12 text-sm text-muted">No class distribution data yet.</p> : null}
+                {!mlStatusSeries.length ? (
+                  <p className="col-span-12 text-sm text-muted">No ML status aggregates yet.</p>
+                ) : null}
               </div>
             </article>
           </div>
@@ -394,15 +427,29 @@ export function DashboardPage() {
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             <article className="rounded-2xl border border-white/10 bg-white/5 p-4 xl:col-span-2">
-              <h2 className="text-lg font-medium text-white">Top Attack Classes</h2>
+              <h2 className="text-lg font-medium text-white">attack_class volume (taxonomy)</h2>
+              <p className="mt-1 text-xs text-muted">Operational labeling volume only.</p>
               <div className="mt-3 space-y-2 text-sm">
-                {topClasses.map((entry) => (
+                {attackClassSeries.slice(0, 8).map((entry) => (
                   <div key={entry.label} className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
                     <span className="text-white">{entry.label}</span>
-                    <span className="text-rose-200">{entry.value} flows</span>
+                    <div className="flex w-40 items-center gap-2">
+                      <div className="h-2 flex-1 rounded-full bg-background/60">
+                        <div
+                          className={`h-2 rounded-full ${volumeBarClass()}`}
+                          style={{
+                            width: `${Math.max(
+                              4,
+                              Math.min(100, Math.round((entry.value / Math.max(1, attackClassSeries[0]?.value ?? 1)) * 100))
+                            )}%`
+                          }}
+                        />
+                      </div>
+                      <span className="text-xs text-muted">{entry.value}</span>
+                    </div>
                   </div>
                 ))}
-                {!topClasses.length ? <p className="text-muted">No class data available yet.</p> : null}
+                {!attackClassSeries.length ? <p className="text-muted">No class data available yet.</p> : null}
               </div>
             </article>
           </div>

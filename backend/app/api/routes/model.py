@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -11,7 +11,8 @@ from app.models.incident import Incident, IncidentStatus
 from app.models.model_version import ModelVersion
 from app.models.traffic_record import TrafficRecord
 from app.models.user import User, UserRole
-from app.schemas.model import ModelVersionResponse, RetrainResponse, SecurityPostureResponse
+from app.schemas.model import ModelVersionResponse, RetrainResponse, SecurityPostureResponse, SocHealthResponse
+from app.services.soc_health import build_soc_health
 from app.tasks.retrain_task import retrain_model_task
 
 router = APIRouter(prefix="/model", tags=["model"])
@@ -34,6 +35,15 @@ def list_versions(
     _user=Depends(require_roles(UserRole.admin, UserRole.customer)),
 ) -> list[ModelVersionResponse]:
     return db.query(ModelVersion).order_by(ModelVersion.created_at.desc()).all()
+
+
+@router.get("/soc-health", response_model=SocHealthResponse)
+def soc_health(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.admin, UserRole.customer)),
+    window_hours: int = Query(24, ge=1, le=168),
+) -> SocHealthResponse:
+    return build_soc_health(db, current_user, window_hours=window_hours)
 
 
 @router.get("/security-posture", response_model=SecurityPostureResponse)

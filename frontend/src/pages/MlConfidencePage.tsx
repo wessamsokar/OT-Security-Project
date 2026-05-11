@@ -110,9 +110,12 @@ export function MlConfidencePage() {
 
   return (
     <section className="rounded-3xl border border-white/10 bg-panel/45 p-6 shadow-panel">
-      <p className="text-xs uppercase tracking-[0.16em] text-brand">ML Page</p>
-      <h1 className="mt-2 text-2xl font-semibold text-white">ML Confidence</h1>
-      <p className="mt-1 text-sm text-muted">Model confidence and explainability snapshot for operator decisions.</p>
+      <p className="text-xs uppercase tracking-[0.16em] text-brand">ML operations</p>
+      <h1 className="mt-2 text-2xl font-semibold text-white">ML operations</h1>
+      <p className="mt-1 text-sm text-muted">
+        Model registry metrics and training-time explainability — not live per-flow SOC verdicts (see Alerts / SOC
+        Health).
+      </p>
 
       {loading ? <p className="mt-4 text-sm text-muted">Loading model confidence...</p> : null}
       {error ? <p className="mt-4 text-sm text-danger">{error}</p> : null}

@@ -17,6 +17,8 @@ export type DashboardSummary = {
   incidents_open: number;
   avg_risk_score: number;
   class_distribution: Record<string, number>;
+  /** Present on API v2 dashboard; older snapshots may omit (treat as {}). */
+  ml_status_distribution?: Record<string, number>;
 };
 
 export async function fetchAlerts(): Promise<AlertResponse[]> {

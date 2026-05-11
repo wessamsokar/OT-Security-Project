@@ -78,3 +78,11 @@ class PacketsByHourResponse(BaseModel):
     avg_per_minute: int
     peak_hour: str
     rows: list[PacketsByHourRow]
+
+
+class InventoryEdgeResponse(BaseModel):
+    """Aggregated flows between two inventory devices (IP-correlated), not inferred topology."""
+
+    device_a_id: int
+    device_b_id: int
+    packet_count: int

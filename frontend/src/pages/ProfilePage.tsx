@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 import { getAuthSession } from "../lib/authSession";
 
 export function ProfilePage() {
@@ -38,6 +40,13 @@ export function ProfilePage() {
           <p className="mt-2 text-lg font-medium text-white">{roleLabel}</p>
         </div>
       </div>
+
+      <p className="mt-6 text-sm text-muted">
+        Account preferences:{" "}
+        <Link to="/dashboard/settings" className="text-violet-200 underline-offset-2 hover:underline">
+          Settings & Privacy
+        </Link>
+      </p>
     </section>
   );
 }
