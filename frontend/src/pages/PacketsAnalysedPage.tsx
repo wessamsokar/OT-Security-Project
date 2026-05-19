@@ -1,18 +1,35 @@
 import { useEffect, useState } from "react";
 
 import { fetchPacketsByHour, type PacketsByHourResponse } from "../api/phase2Api";
+import { useTenant } from "../contexts/TenantContext";
 
 export function PacketsAnalysedPage() {
   const [payload, setPayload] = useState<PacketsByHourResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const { activeTenantId, canSelectTenant, assignedCustomers, isLoadingAssignments } = useTenant();
+  const tenantId = canSelectTenant ? activeTenantId : undefined;
 
   useEffect(() => {
     let active = true;
 
+    if (canSelectTenant && isLoadingAssignments) {
+      return () => {
+        active = false;
+      };
+    }
+
+    if (canSelectTenant && assignedCustomers.length === 0) {
+      setError("No customer tenants assigned. Contact an administrator.");
+      setLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
     const load = async () => {
       try {
-        const data = await fetchPacketsByHour();
+        const data = await fetchPacketsByHour(tenantId);
         if (!active) return;
         setPayload(data);
         setError("");
@@ -35,7 +52,7 @@ export function PacketsAnalysedPage() {
       active = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
 
   const rows = payload?.rows ?? [];
 

@@ -4,14 +4,14 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { Logo } from "./Logo";
+import { logoutUser } from "../../api/authApi";
 import { Button } from "../ui/Button";
 import { useOptionalOnboardingAccess } from "../../contexts/OnboardingAccessContext";
-import { clearAuthSession, getAuthSession, getUserRole, hasRole, isAuthenticated } from "../../lib/authSession";
-import { navItemVisibleWhenPending, PUBLIC_NAV_ITEMS, TOP_NAV_ITEMS } from "../../lib/navigation";
+import { useAuth } from "../../contexts/AuthContext";
+import { navItemVisibleForRole, navItemVisibleWhenPending, PUBLIC_NAV_ITEMS, TOP_NAV_ITEMS } from "../../lib/navigation";
 
-function getUserDisplayName() {
-  const session = getAuthSession();
-  const fullName = session?.user?.fullName?.trim() ?? "";
+function getUserDisplayName(fullNameRaw?: string) {
+  const fullName = fullNameRaw?.trim() ?? "";
   const parts = fullName.split(/\s+/).filter(Boolean);
   if (parts.length >= 2) {
     return `${parts[0]} ${parts[1]}`;
@@ -33,24 +33,11 @@ type NavbarProps = {
 export function Navbar({ onNavItemClick, onSidebarToggle, isSidebarOpen = false }: NavbarProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [authed, setAuthed] = useState<boolean>(isAuthenticated());
-  const [displayName, setDisplayName] = useState<string>(getUserDisplayName());
+  const { user, isAuthenticated, hasPermission, clearSession, isRefreshing, isDegraded } = useAuth();
+  const authed = isAuthenticated;
+  const displayName = getUserDisplayName(user?.fullName);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const role = getUserRole();
   const pendingShell = useOptionalOnboardingAccess()?.status === "pending";
-
-  useEffect(() => {
-    const sync = () => {
-      setAuthed(isAuthenticated());
-      setDisplayName(getUserDisplayName());
-    };
-    window.addEventListener("storage", sync);
-    window.addEventListener("auth-changed", sync);
-    return () => {
-      window.removeEventListener("storage", sync);
-      window.removeEventListener("auth-changed", sync);
-    };
-  }, []);
 
   useEffect(() => {
     setMobileMenuOpen(false);
@@ -81,7 +68,8 @@ export function Navbar({ onNavItemClick, onSidebarToggle, isSidebarOpen = false 
         <nav className="hidden items-center gap-7 text-sm text-muted md:flex">
           {authed ? (
             <>
-              {TOP_NAV_ITEMS.filter((item) => !item.roles || (role ? hasRole(item.roles) : false))
+              {TOP_NAV_ITEMS.filter((item) => !item.permissions || hasPermission(item.permissions))
+                .filter((item) => navItemVisibleForRole(item, user?.role))
                 .filter((item) => navItemVisibleWhenPending(item, pendingShell))
                 .map((item) => (
                 <motion.div
@@ -167,6 +155,12 @@ export function Navbar({ onNavItemClick, onSidebarToggle, isSidebarOpen = false 
           </button>
           {authed ? (
             <>
+              {isRefreshing || isDegraded ? (
+                <span className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-muted md:inline-flex">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" />
+                  {isDegraded ? "Session degraded" : "Syncing session"}
+                </span>
+              ) : null}
               <motion.div
                 className="rounded-xl2"
                 whileHover={{
@@ -194,8 +188,13 @@ export function Navbar({ onNavItemClick, onSidebarToggle, isSidebarOpen = false 
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => {
-                    clearAuthSession();
+                  onClick={async () => {
+                    try {
+                      await logoutUser();
+                    } catch {
+                      // Local logout still clears the UI session if the server is unreachable.
+                    }
+                    clearSession();
                     navigate("/", { replace: true });
                   }}
                 >
@@ -249,7 +248,8 @@ export function Navbar({ onNavItemClick, onSidebarToggle, isSidebarOpen = false 
               <div className="space-y-1">
                 {authed ? (
                   <>
-                    {TOP_NAV_ITEMS.filter((item) => !item.roles || (role ? hasRole(item.roles) : false))
+                    {TOP_NAV_ITEMS.filter((item) => !item.permissions || hasPermission(item.permissions))
+                      .filter((item) => navItemVisibleForRole(item, user?.role))
                       .filter((item) => navItemVisibleWhenPending(item, pendingShell))
                       .map((item) => (
                       <NavLink

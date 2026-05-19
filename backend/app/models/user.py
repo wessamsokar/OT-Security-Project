@@ -10,8 +10,8 @@ from app.db.base import Base
 class UserRole(str, Enum):
     admin = "admin"
     customer = "customer"
-    analyst = "analyst"  # legacy role, treated as customer in permissions
-    viewer = "viewer"  # legacy role, treated as customer in permissions
+    analyst = "analyst"
+    viewer = "viewer"
 
 
 class OnboardingStatus(str, Enum):
@@ -68,3 +68,14 @@ class User(Base):
 
     roles = relationship("Role", secondary="user_roles", back_populates="users")
     devices = relationship("Device", back_populates="owner", cascade="all, delete-orphan")
+
+class UserCustomerAssignment(Base):
+    """
+    Many-to-many relationship scoping Analyst/Viewer users to Customer users.
+    An analyst/viewer will only see data belonging to their assigned customers.
+    """
+    __tablename__ = "user_customer_assignments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    assigned_user_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    customer_user_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)

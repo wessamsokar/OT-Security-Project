@@ -59,6 +59,9 @@ logger = logging.getLogger("NDR-API")
 # APP SETUP
 # ═══════════════════════════════════════════════════════════════
 
+_app_env = os.environ.get("APP_ENV", "development").strip().lower()
+_is_production = _app_env in {"production", "prod", "staging"}
+
 app = FastAPI(
     title="ICS/OT NDR Engine API",
     description=(
@@ -67,19 +70,40 @@ app = FastAPI(
         "Use **GET /test** to verify the system is working end-to-end before integration."
     ),
     version="2.1.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url=None if _is_production else "/docs",
+    redoc_url=None if _is_production else "/redoc",
 )
 
 # ── CORS — allow all origins during development ──────────────
 # Restrict allow_origins in production to your frontend domain.
+_ml_internal_key = os.environ.get("ML_INTERNAL_API_KEY", "").strip()
+_ml_allowed_origins = [
+    o.strip()
+    for o in os.environ.get("ML_CORS_ORIGINS", "").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],       # e.g. ["https://your-dashboard.com"] in prod
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_ml_allowed_origins or [],
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-ML-Internal-Key"],
 )
+
+
+@app.middleware("http")
+async def internal_service_auth(request: Request, call_next):
+    """Restrict inference to backend callers when ML_INTERNAL_API_KEY is set."""
+    path = request.url.path.rstrip("/") or "/"
+    public_paths = {"/health", "/healthz", "/readyz"}
+    if path in public_paths:
+        return await call_next(request)
+    if _ml_internal_key:
+        provided = request.headers.get("x-ml-internal-key", "")
+        if provided != _ml_internal_key:
+            return JSONResponse(status_code=403, content={"detail": "Internal ML API key required"})
+    return await call_next(request)
 
 # ── Global state ─────────────────────────────────────────────
 _engine: Optional[NDREngine] = None

@@ -9,6 +9,7 @@ from app.models.alert import Alert
 from app.models.incident import Incident, IncidentStatus
 from app.models.traffic_record import TrafficRecord
 from app.models.user import User, UserRole
+from app.services.tenant import get_accessible_tenant_ids
 from app.schemas.alerts import DashboardSummary
 
 
@@ -16,7 +17,13 @@ def _is_admin(user: User) -> bool:
     return bool(user.role and user.role.value == UserRole.admin.value)
 
 
-def build_dashboard_summary(db: Session, current_user: User | None, *, public_mode: bool = False) -> DashboardSummary:
+def build_dashboard_summary(
+    db: Session,
+    current_user: User | None,
+    *,
+    public_mode: bool = False,
+    requested_tenant_id: int | None = None,
+) -> DashboardSummary:
     """
     When ``public_mode`` is True, aggregates are global (marketing / public snapshot).
     Otherwise ``current_user`` scopes customer data; admins see all tenants.
@@ -38,15 +45,17 @@ def build_dashboard_summary(db: Session, current_user: User | None, *, public_mo
 
     if not public_mode:
         assert current_user is not None
-        if not _is_admin(current_user):
-            uid = current_user.id
-            records_query = records_query.filter(TrafficRecord.user_id == uid)
-            alerts_query = alerts_query.filter(TrafficRecord.user_id == uid)
-            incidents_query = incidents_query.filter(TrafficRecord.user_id == uid)
-            avg_query = avg_query.filter(TrafficRecord.user_id == uid)
-            class_query = class_query.filter(TrafficRecord.user_id == uid)
-            ml_query = db.query(ml_label, func.count(TrafficRecord.id)).filter(TrafficRecord.user_id == uid).group_by(
-                ml_label
+        tenant_ids = get_accessible_tenant_ids(db, current_user, requested_tenant_id)
+        if tenant_ids is not None:
+            records_query = records_query.filter(TrafficRecord.user_id.in_(tenant_ids))
+            alerts_query = alerts_query.filter(TrafficRecord.user_id.in_(tenant_ids))
+            incidents_query = incidents_query.filter(TrafficRecord.user_id.in_(tenant_ids))
+            avg_query = avg_query.filter(TrafficRecord.user_id.in_(tenant_ids))
+            class_query = class_query.filter(TrafficRecord.user_id.in_(tenant_ids))
+            ml_query = (
+                db.query(ml_label, func.count(TrafficRecord.id))
+                .filter(TrafficRecord.user_id.in_(tenant_ids))
+                .group_by(ml_label)
             )
 
     total_records = records_query.with_entities(func.count(TrafficRecord.id)).scalar() or 0

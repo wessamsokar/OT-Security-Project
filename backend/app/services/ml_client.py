@@ -12,6 +12,13 @@ def _ml_base_url() -> str:
     return settings.ml_service_url.rstrip("/")
 
 
+def _ml_headers() -> dict[str, str]:
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if settings.ml_service_api_key:
+        headers["X-ML-Internal-Key"] = settings.ml_service_api_key
+    return headers
+
+
 def _ml_error_detail(exc: httpx.HTTPStatusError) -> str:
     try:
         data = exc.response.json()
@@ -31,8 +38,8 @@ def _ml_error_detail(exc: httpx.HTTPStatusError) -> str:
 async def run_inference(payload: dict[str, Any]) -> dict[str, Any]:
     base = _ml_base_url()
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(f"{base}/infer", json=payload)
+        async with httpx.AsyncClient(timeout=settings.ml_infer_timeout_seconds) as client:
+            response = await client.post(f"{base}/infer", json=payload, headers=_ml_headers())
             response.raise_for_status()
             data = response.json()
             if not isinstance(data, dict):
@@ -56,8 +63,8 @@ async def run_inference(payload: dict[str, Any]) -> dict[str, Any]:
 async def trigger_retrain(payload: dict[str, Any]) -> dict[str, Any]:
     base = _ml_base_url()
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(f"{base}/retrain", json=payload)
+        async with httpx.AsyncClient(timeout=settings.ml_retrain_timeout_seconds) as client:
+            response = await client.post(f"{base}/retrain", json=payload, headers=_ml_headers())
             response.raise_for_status()
             return response.json()
     except httpx.HTTPStatusError as exc:

@@ -2,6 +2,9 @@ import { apiClient } from "./client";
 import type { AlertResponse } from "./alertsApi";
 import type { DeviceResponse } from "./devicesApi";
 import type { TrafficRecordResponse } from "./trafficApi";
+import type { UserRole } from "../types/auth";
+
+const API_TIMEOUT_MS = 8000;
 
 export type OnboardingStatus = "pending" | "approved" | "rejected";
 
@@ -9,7 +12,7 @@ export type UserAdminResponse = {
   id: number;
   username: string;
   email: string;
-  role: "admin" | "customer";
+  role: UserRole;
   is_active: boolean;
   is_email_verified: boolean;
   email_verified_at: string | null;
@@ -32,18 +35,26 @@ export type UserCreate = {
   username: string;
   email: string;
   password: string;
-  role?: "admin" | "customer";
+  role?: UserRole;
   is_active?: boolean;
   is_email_verified?: boolean;
   /** Default true: admin-created users can sign in immediately */
   is_admin_approved?: boolean;
 };
 
+export type CustomerAssignmentResponse = {
+  assigned_customers: UserAdminResponse[];
+};
+
+export type BulkAssignmentResponse = {
+  assignments: Record<string, UserAdminResponse[]>;
+};
+
 export type UserUpdate = {
   username?: string;
   email?: string;
   password?: string;
-  role?: "admin" | "customer";
+  role?: UserRole;
   is_active?: boolean;
   is_email_verified?: boolean;
   is_admin_approved?: boolean;
@@ -66,25 +77,35 @@ export type ActiveThreatResponse = {
   created_at: string;
 };
 
-export async function fetchUsers(query?: string): Promise<UserAdminResponse[]> {
+export async function fetchUsers(query?: string, role?: UserRole): Promise<UserAdminResponse[]> {
+  const params: Record<string, string> = {};
+  if (query) params.q = query;
+  if (role) params.role = role;
   const response = await apiClient.get<UserAdminResponse[]>("/v1/users", {
-    params: query ? { q: query } : undefined
+    params: Object.keys(params).length > 0 ? params : undefined,
+    timeout: API_TIMEOUT_MS
   });
   return response.data;
 }
 
 export async function fetchUser(userId: number): Promise<UserAdminResponse> {
-  const response = await apiClient.get<UserAdminResponse>(`/v1/users/${userId}`);
+  const response = await apiClient.get<UserAdminResponse>(`/v1/users/${userId}`, {
+    timeout: API_TIMEOUT_MS
+  });
   return response.data;
 }
 
 export async function createUser(payload: UserCreate): Promise<UserAdminResponse> {
-  const response = await apiClient.post<UserAdminResponse>("/v1/users", payload);
+  const response = await apiClient.post<UserAdminResponse>("/v1/users", payload, {
+    timeout: API_TIMEOUT_MS
+  });
   return response.data;
 }
 
 export async function updateUser(userId: number, payload: UserUpdate): Promise<UserAdminResponse> {
-  const response = await apiClient.put<UserAdminResponse>(`/v1/users/${userId}`, payload);
+  const response = await apiClient.put<UserAdminResponse>(`/v1/users/${userId}`, payload, {
+    timeout: API_TIMEOUT_MS
+  });
   return response.data;
 }
 
@@ -138,6 +159,28 @@ export async function fetchUserIncidents(userId: number, limit = 50): Promise<In
 export async function fetchUserTraffic(userId: number, limit = 50): Promise<TrafficRecordResponse[]> {
   const response = await apiClient.get<TrafficRecordResponse[]>(`/v1/users/${userId}/traffic`, {
     params: { limit }
+  });
+  return response.data;
+}
+
+
+export async function fetchUserCustomers(userId: number): Promise<CustomerAssignmentResponse> {
+  const response = await apiClient.get<CustomerAssignmentResponse>(`/v1/users/${userId}/customers`, {
+    timeout: API_TIMEOUT_MS
+  });
+  return response.data;
+}
+
+export async function fetchBulkAssignments(): Promise<BulkAssignmentResponse> {
+  const response = await apiClient.get<BulkAssignmentResponse>(`/v1/users/assignments/bulk`, {
+    timeout: API_TIMEOUT_MS
+  });
+  return response.data;
+}
+
+export async function updateUserCustomers(userId: number, customerIds: number[]): Promise<CustomerAssignmentResponse> {
+  const response = await apiClient.put<CustomerAssignmentResponse>(`/v1/users/${userId}/customers`, {
+    customer_ids: customerIds
   });
   return response.data;
 }

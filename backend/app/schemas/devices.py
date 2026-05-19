@@ -35,6 +35,7 @@ class DeviceResponse(DeviceBase):
     last_ml_risk_score: float | None = None
     last_ml_status: str | None = None
     monitoring_status: str = "offline"
+    operational_state: str = "unknown"
     last_traffic_at: datetime | None = None
     last_seen_traffic_id: int | None = None
 

@@ -1,44 +1,26 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { fetchAlerts, fetchDashboardSummary, type AlertResponse, type DashboardSummary } from "../api/alertsApi";
-import { fetchDevices } from "../api/devicesApi";
+import { fetchDevices, type DeviceResponse } from "../api/devicesApi";
+import {
+  fetchActiveThreats,
+  fetchPacketsByHour,
+  fetchSocHealth,
+  type ActiveThreat,
+  type PacketsByHourResponse,
+  type SocHealthPayload
+} from "../api/phase2Api";
 import { fetchUsers } from "../api/usersApi";
 import { connectAlertsStream } from "../api/streamApi";
-import { getAuthSession, hasRole } from "../lib/authSession";
-
-type MlStatusPoint = {
-  label: string;
-  value: number;
-  kind: "attack" | "suspicious" | "neutral" | "muted";
-};
+import { useAuth } from "../contexts/AuthContext";
+import { useTenant } from "../contexts/TenantContext";
 
 function severityClasses(severity: "High" | "Medium" | "Low") {
   if (severity === "High") return "bg-rose-500/20 text-rose-300";
   if (severity === "Medium") return "bg-amber-500/20 text-amber-300";
   return "bg-emerald-500/20 text-emerald-300";
-}
-
-/** Bar color from persisted ``ml_status`` labels only (explicit contract values). */
-function mlStatusBarClass(kind: MlStatusPoint["kind"]) {
-  if (kind === "attack") return "bg-rose-500";
-  if (kind === "suspicious") return "bg-amber-500";
-  if (kind === "muted") return "bg-slate-600";
-  return "bg-sky-500";
-}
-
-function mlStatusKindFromLabel(status: string): MlStatusPoint["kind"] {
-  const s = status.toLowerCase();
-  if (s === "under_attack") return "attack";
-  if (s === "suspicious" || s === "unknown_degraded") return "suspicious";
-  if (s === "(no_ml_output)") return "muted";
-  return "neutral";
-}
-
-/** attack_class volume is taxonomy only — single neutral bar color. */
-function volumeBarClass() {
-  return "bg-slate-500";
 }
 
 function logClasses(severity: AlertResponse["severity"]) {
@@ -47,414 +29,729 @@ function logClasses(severity: AlertResponse["severity"]) {
   return "text-emerald-200";
 }
 
+function StatCard({
+  label,
+  value,
+  hint,
+  accent
+}: {
+  label: string;
+  value: string | number;
+  hint?: string;
+  accent?: string;
+}) {
+  return (
+    <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+      <p className="text-xs uppercase tracking-wide text-muted">{label}</p>
+      <p className={`mt-2 text-3xl font-semibold ${accent ?? "text-white"}`}>{value}</p>
+      {hint ? <p className="mt-1 text-xs text-muted">{hint}</p> : null}
+    </article>
+  );
+}
+
+function QuickAction({ to, label, description }: { to: string; label: string; description: string }) {
+  return (
+    <Link
+      to={to}
+      className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white transition hover:bg-white/10"
+    >
+      <span className="block text-sm font-medium text-white">{label}</span>
+      <span className="mt-1 block text-xs text-muted">{description}</span>
+    </Link>
+  );
+}
+
 export function DashboardPage() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [alerts, setAlerts] = useState<AlertResponse[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [adminLoading, setAdminLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [adminError, setAdminError] = useState("");
+  const [activeThreats, setActiveThreats] = useState<ActiveThreat[]>([]);
+  const [packets, setPackets] = useState<PacketsByHourResponse | null>(null);
+  const [socHealth, setSocHealth] = useState<SocHealthPayload | null>(null);
+  const [devices, setDevices] = useState<DeviceResponse[]>([]);
   const [adminUsers, setAdminUsers] = useState(0);
-  const [adminDevices, setAdminDevices] = useState(0);
+  const [pendingOnboarding, setPendingOnboarding] = useState(0);
   const [showWelcome, setShowWelcome] = useState(true);
 
-  const session = getAuthSession();
-  const showAdminInsights = hasRole("admin");
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [alertsLoading, setAlertsLoading] = useState(false);
+  const [threatsLoading, setThreatsLoading] = useState(false);
+  const [packetsLoading, setPacketsLoading] = useState(false);
+  const [devicesLoading, setDevicesLoading] = useState(false);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [socLoading, setSocLoading] = useState(false);
+
+  const [summaryError, setSummaryError] = useState("");
+  const [alertsError, setAlertsError] = useState("");
+  const [threatsError, setThreatsError] = useState("");
+  const [packetsError, setPacketsError] = useState("");
+  const [devicesError, setDevicesError] = useState("");
+  const [adminError, setAdminError] = useState("");
+  const [socError, setSocError] = useState("");
+  const alertsErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const { user, hasPermission } = useAuth();
+  const { activeTenantId, canSelectTenant, assignedCustomers, isLoadingAssignments } = useTenant();
+  const role = user?.role ?? "customer";
+  const isAdmin = role === "admin";
+  const tenantId = (role === "analyst" || role === "viewer") ? activeTenantId : undefined;
+  const roleLabel = role.replace(/^\w/, (char) => char.toUpperCase());
+  const welcomeName = user?.fullName ?? "Operator";
+  const firstName = welcomeName.split(" ")[0] ?? "Operator";
+
+  const canViewDashboard = hasPermission("view_dashboard");
+  const canViewAlerts = hasPermission("view_alerts");
+  const canViewDevices = hasPermission("view_devices");
+  const canViewUsers = hasPermission("view_users");
+  const canViewSocHealth = hasPermission("view_soc_health");
+  const canViewTraffic = hasPermission("view_traffic");
+
+  const needsSummary = canViewDashboard;
+  const needsAlertsList = canViewAlerts && (role === "admin" || role === "analyst");
+  const needsThreats = canViewAlerts && role === "analyst";
+  const needsPackets = canViewTraffic && (role === "analyst" || role === "viewer" || role === "customer");
+  const needsDevices = canViewDevices && (role === "admin" || role === "viewer" || role === "customer");
+  const needsUsers = canViewUsers && role === "admin";
+  const needsSocHealth = canViewSocHealth && role === "admin";
 
   useEffect(() => {
-    let active = true;
+    // Only warn about empty assignments for non-admin roles
+    if (isAdmin || !canSelectTenant || isLoadingAssignments) return;
+    if (assignedCustomers.length === 0) {
+      const message = "No customer tenants assigned. Contact an administrator.";
+      setSummaryLoading(false);
+      setAlertsLoading(false);
+      setThreatsLoading(false);
+      setPacketsLoading(false);
+      setDevicesLoading(false);
+      setSocLoading(false);
+      setSummaryError(message);
+      setAlertsError(message);
+      setThreatsError(message);
+      setPacketsError(message);
+      setDevicesError(message);
+      setSocError(message);
+    }
+  }, [isAdmin, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
 
-    const load = async () => {
-      try {
-        const [dashboardData, alertData] = await Promise.all([
-          fetchDashboardSummary(),
-          fetchAlerts()
-        ]);
-
-        if (!active) return;
-        setSummary(dashboardData);
-        setAlerts(alertData);
-        setError("");
-      } catch (err) {
-        if (!active) return;
-        setError(err instanceof Error ? err.message : "Unable to load dashboard metrics right now.");
-      } finally {
-        if (active) {
-          setLoading(false);
+    useEffect(() => {
+      let active = true;
+      if (!needsSummary) return;
+      if (!isAdmin && canSelectTenant && (isLoadingAssignments || !tenantId || assignedCustomers.length === 0)) return;
+      setSummaryLoading(true);
+      const load = async () => {
+        try {
+          const dashboardData = await fetchDashboardSummary(tenantId);
+          if (!active) return;
+          setSummary(dashboardData);
+          setSummaryError("");
+        } catch (err) {
+          if (!active) return;
+          setSummaryError(err instanceof Error ? err.message : "Unable to load dashboard metrics right now.");
+        } finally {
+          if (active) setSummaryLoading(false);
         }
-      }
-    };
-
-    void load();
-
-    const stream = connectAlertsStream(
-      (snapshot) => {
-        if (!active) return;
-        setSummary(snapshot.dashboard);
-        setAlerts(snapshot.alerts);
-        setError("");
-        setLoading(false);
-      },
-      () => {
-        if (!active) return;
-        setError("Live stream disconnected. Showing latest available dashboard snapshot.");
-      }
-    );
-
-    return () => {
-      active = false;
-      stream?.close();
-    };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    if (!showAdminInsights) {
-      setAdminLoading(false);
+      };
+      void load();
       return () => {
         active = false;
       };
-    }
+    }, [needsSummary, tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
 
-    const loadAdmin = async () => {
+    useEffect(() => {
+      let active = true;
+      if (!needsAlertsList) return;
+      if (!isAdmin && canSelectTenant && (isLoadingAssignments || !tenantId || assignedCustomers.length === 0)) return;
+      setAlertsLoading(true);
+      const load = async () => {
+        try {
+          const rows = await fetchAlerts(tenantId);
+          if (!active) return;
+          setAlerts(rows);
+          setAlertsError("");
+        } catch (err) {
+          if (!active) return;
+          setAlertsError(err instanceof Error ? err.message : "Unable to load alerts right now.");
+        } finally {
+          if (active) setAlertsLoading(false);
+        }
+      };
+      void load();
+
+      // Use lazy SSE initialization to avoid blocking initial render
+      const stream = connectAlertsStream(
+        (snapshot) => {
+          if (!active) return;
+          if (alertsErrorTimerRef.current) {
+            clearTimeout(alertsErrorTimerRef.current);
+            alertsErrorTimerRef.current = null;
+          }
+          setAlerts(snapshot.alerts);
+          if (needsSummary) {
+            setSummary(snapshot.dashboard);
+          }
+          setAlertsError("");
+          setAlertsLoading(false);
+        },
+        () => {
+          if (!active) return;
+          if (alertsErrorTimerRef.current) return;
+          alertsErrorTimerRef.current = setTimeout(() => {
+            setAlertsError("Live stream disconnected. Showing latest available alerts.");
+            alertsErrorTimerRef.current = null;
+          }, 8000); // 8s grace period absorbs normal server-side reconnects
+        },
+        tenantId,
+        { lazy: true, visibilityAware: true }
+      );
+
+      return () => {
+        active = false;
+        if (alertsErrorTimerRef.current) {
+          clearTimeout(alertsErrorTimerRef.current);
+          alertsErrorTimerRef.current = null;
+        }
+        stream?.close();
+      };
+    }, [needsAlertsList, needsSummary, tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
+
+    useEffect(() => {
+      let active = true;
+      if (!needsThreats) return;
+      if (!isAdmin && canSelectTenant && (isLoadingAssignments || !tenantId || assignedCustomers.length === 0)) return;
+      setThreatsLoading(true);
+      const load = async () => {
+        try {
+          const rows = await fetchActiveThreats(tenantId);
+          if (!active) return;
+          setActiveThreats(rows);
+          setThreatsError("");
+        } catch (err) {
+          if (!active) return;
+          setThreatsError(err instanceof Error ? err.message : "Unable to load active threats.");
+        } finally {
+          if (active) setThreatsLoading(false);
+        }
+      };
+      void load();
+      return () => {
+        active = false;
+      };
+    }, [needsThreats, tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
+
+    useEffect(() => {
+      let active = true;
+      if (!needsPackets) return;
+      if (!isAdmin && canSelectTenant && (isLoadingAssignments || !tenantId || assignedCustomers.length === 0)) return;
+      setPacketsLoading(true);
+      const load = async () => {
+        try {
+          const data = await fetchPacketsByHour(tenantId);
+          if (!active) return;
+          setPackets(data);
+          setPacketsError("");
+        } catch (err) {
+          if (!active) return;
+          setPacketsError(err instanceof Error ? err.message : "Unable to load telemetry trends.");
+        } finally {
+          if (active) setPacketsLoading(false);
+        }
+      };
+      void load();
+      return () => {
+        active = false;
+      };
+    }, [needsPackets, tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
+
+    useEffect(() => {
+      let active = true;
+      if (!needsDevices) return;
+      if (!isAdmin && canSelectTenant && (isLoadingAssignments || !tenantId || assignedCustomers.length === 0)) return;
+      setDevicesLoading(true);
+      const load = async () => {
+        try {
+          const rows = await fetchDevices(tenantId);
+          if (!active) return;
+          setDevices(rows);
+          setDevicesError("");
+        } catch (err) {
+          if (!active) return;
+          setDevicesError(err instanceof Error ? err.message : "Unable to load device inventory.");
+        } finally {
+          if (active) setDevicesLoading(false);
+        }
+      };
+      void load();
+      return () => {
+        active = false;
+      };
+    }, [needsDevices, tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
+
+    useEffect(() => {
+      let active = true;
+      if (!needsUsers) return;
       setAdminLoading(true);
-      try {
-        const [users, devices] = await Promise.all([fetchUsers(), fetchDevices()]);
-        if (!active) return;
-        setAdminUsers(users.length);
-        setAdminDevices(devices.length);
-        setAdminError("");
-      } catch (err) {
-        if (!active) return;
-        setAdminError(err instanceof Error ? err.message : "Unable to load admin overview.");
-      } finally {
-        if (active) setAdminLoading(false);
-      }
+      const load = async () => {
+        try {
+          const rows = await fetchUsers();
+          if (!active) return;
+          setAdminUsers(rows.length);
+          setPendingOnboarding(rows.filter((row) => row.onboarding_status === "pending").length);
+          setAdminError("");
+        } catch (err) {
+          if (!active) return;
+          setAdminError(err instanceof Error ? err.message : "Unable to load admin overview.");
+        } finally {
+          if (active) setAdminLoading(false);
+        }
+      };
+      void load();
+      return () => {
+        active = false;
+      };
+    }, [needsUsers]);
+
+    useEffect(() => {
+      let active = true;
+      if (!needsSocHealth) return;
+      if (!isAdmin && canSelectTenant && (isLoadingAssignments || !tenantId || assignedCustomers.length === 0)) return;
+      setSocLoading(true);
+      const load = async () => {
+        try {
+          const data = await fetchSocHealth(tenantId);
+          if (!active) return;
+          setSocHealth(data);
+          setSocError("");
+        } catch (err) {
+          if (!active) return;
+          setSocError(err instanceof Error ? err.message : "Unable to load system health.");
+        } finally {
+          if (active) setSocLoading(false);
+        }
+      };
+      void load();
+      return () => {
+        active = false;
+      };
+    }, [needsSocHealth, tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
+
+    const packetCount = summary?.total_records ?? 0;
+    const totalAlertsToday = summary?.total_alerts ?? 0;
+    const meanRiskPct = ((summary?.avg_risk_score ?? 0) * 100).toFixed(1);
+    const highAlerts = alerts.filter((item) => item.severity === "critical" || item.severity === "high").length;
+    const deviceActiveCount = devices.filter((d) => d.is_active && d.monitoring_status === "active").length;
+    const deviceCoverage = devices.length ? Math.round((deviceActiveCount / devices.length) * 100) : 0;
+    const protocolMix = useMemo(() => {
+      if (!packets?.rows) return [] as Array<{ label: string; value: number }>;
+      const tally = new Map<string, number>();
+      packets.rows.forEach((row) => {
+        if (!row.dominant_protocol) return;
+        tally.set(row.dominant_protocol, (tally.get(row.dominant_protocol) ?? 0) + row.packets);
+      });
+      return Array.from(tally.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([label, value]) => ({ label, value }));
+    }, [packets]);
+
+    const attackClassSeries = useMemo(
+      () =>
+        Object.entries(summary?.class_distribution ?? {})
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 6)
+          .map(([label, value]) => ({ label, value })),
+      [summary]
+    );
+
+    const roleTitleMap: Record<string, string> = {
+      admin: "Platform Admin",
+      analyst: "SOC Analyst",
+      viewer: "Operational Viewer",
+      customer: "Customer Operations"
     };
 
-    void loadAdmin();
-    return () => {
-      active = false;
-    };
-  }, [showAdminInsights]);
-  const welcomeName = session?.user.fullName ?? "Security Analyst";
-  const firstName = welcomeName.split(" ")[0] ?? "Analyst";
-
-  const packetCount = summary?.total_records ?? 0;
-  const totalAlertsToday = summary?.total_alerts ?? 0;
-  const activeThreats = useMemo(() => {
-    return alerts.filter((item) => item.severity === "critical" || item.severity === "high").length;
-  }, [alerts]);
-  const meanRiskPct = ((summary?.avg_risk_score ?? 0) * 100).toFixed(1);
-
-  const mlStatusSeries: MlStatusPoint[] = useMemo(
-    () =>
-      Object.entries(summary?.ml_status_distribution ?? {})
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 12)
-        .map(([label, value]) => ({
-          label,
-          value,
-          kind: mlStatusKindFromLabel(label)
-        })),
-    [summary]
-  );
-
-  const mlMax = useMemo(() => Math.max(1, ...mlStatusSeries.map((p) => p.value)), [mlStatusSeries]);
-
-  const attackClassSeries = useMemo(
-    () =>
-      Object.entries(summary?.class_distribution ?? {})
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 12)
-        .map(([label, value]) => ({ label, value })),
-    [summary]
-  );
-
-  const topAttackClasses = attackClassSeries.slice(0, 3);
-
-  return (
-    <section className="space-y-5 rounded-3xl border border-white/10 bg-panel/45 p-6 shadow-panel">
-      {showWelcome ? (
-        <div className="rounded-2xl border border-white/10 bg-gradient-to-r from-white/10 to-white/5 p-5">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs uppercase tracking-[0.16em] text-brand">
-                {showAdminInsights ? "Admin Overview" : "User Dashboard"}
-              </p>
-              <h1 className="mt-2 text-2xl font-semibold text-white">Welcome back, {firstName}</h1>
-              <p className="mt-1 text-sm text-muted">
-                {showAdminInsights
-                  ? "Admin control center for users, roles, devices, and platform status."
-                  : "ML-driven SOC view: live alerts, backend risk aggregates, and device state."}
-              </p>
+    return (
+      <section className="space-y-5 rounded-3xl border border-white/10 bg-panel/45 p-6 shadow-panel">
+        {canSelectTenant && !isAdmin && isLoadingAssignments ? (
+          <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs uppercase tracking-[0.16em] text-muted">
+            Loading customer scope…
+          </div>
+        ) : null}
+        {canSelectTenant && !isAdmin && !isLoadingAssignments && assignedCustomers.length === 0 ? (
+          <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+            No customer tenants assigned. Contact an administrator to access data.
+          </div>
+        ) : null}
+        {showWelcome ? (
+          <div className="rounded-2xl border border-white/10 bg-gradient-to-r from-white/10 to-white/5 p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.16em] text-brand">
+                  {roleTitleMap[role] ?? `${roleLabel} Dashboard`}
+                </p>
+                <h1 className="mt-2 text-2xl font-semibold text-white">Welcome back, {firstName}</h1>
+                <p className="mt-1 text-sm text-muted">
+                  {role === "admin"
+                    ? "Platform oversight, onboarding approvals, and security posture at a glance."
+                    : role === "analyst"
+                    ? "SOC operations workspace: active threats, detections, and telemetry focus."
+                    : role === "viewer"
+                    ? "Read-only operational visibility with low-noise monitoring context."
+                    : "Operational view of your OT environment, coverage, and telemetry health."}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowWelcome(false)}
+                className="rounded-full border border-white/10 bg-white/5 p-1.5 text-muted transition hover:text-white"
+                aria-label="Hide welcome panel"
+              >
+                <X size={14} />
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowWelcome(false)}
-              className="rounded-full border border-white/10 bg-white/5 p-1.5 text-muted transition hover:text-white"
-              aria-label="Hide welcome panel"
-            >
-              <X size={14} />
-            </button>
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      {loading ? <p className="text-sm text-muted">Loading dashboard data...</p> : null}
-      {error ? <p className="text-sm text-danger">{error}</p> : null}
+        {summaryLoading ? <p className="text-sm text-muted">Loading dashboard data...</p> : null}
+        {summaryError ? <p className="text-sm text-danger">{summaryError}</p> : null}
 
-      {showAdminInsights ? (
-        <>
-          {adminLoading ? <p className="text-sm text-muted">Loading admin overview...</p> : null}
-          {adminError ? <p className="text-sm text-danger">{adminError}</p> : null}
+        {role === "admin" ? (
+          <>
+            {adminLoading ? <p className="text-sm text-muted">Loading admin overview...</p> : null}
+            {adminError ? <p className="text-sm text-danger">{adminError}</p> : null}
+            {socLoading ? <p className="text-sm text-muted">Loading system health...</p> : null}
+            {socError ? <p className="text-sm text-danger">{socError}</p> : null}
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
-            <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-wide text-muted">Total Users</p>
-              <p className="mt-2 text-3xl font-semibold text-white">{adminUsers.toLocaleString()}</p>
-            </article>
-            <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-wide text-muted">Total Devices</p>
-              <p className="mt-2 text-3xl font-semibold text-white">{adminDevices.toLocaleString()}</p>
-            </article>
-            <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-wide text-muted">Alerts Today</p>
-              <p className="mt-2 text-3xl font-semibold text-white">{totalAlertsToday}</p>
-            </article>
-            <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-wide text-muted">Open Incidents</p>
-              <p className="mt-2 text-3xl font-semibold text-white">{summary?.incidents_open ?? 0}</p>
-            </article>
-            <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-wide text-muted">Avg Risk Score</p>
-              <p className="mt-2 text-3xl font-semibold text-white">{meanRiskPct}%</p>
-            </article>
-          </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7">
+              <StatCard label="Total users" value={adminUsers.toLocaleString()} />
+              <StatCard label="Active devices" value={devices.length.toLocaleString()} />
+              <StatCard label="Onboarding requests" value={pendingOnboarding} accent="text-amber-200" />
+              <StatCard label="System health" value={socHealth?.traffic_flows_in_window?.toLocaleString() ?? "—"} hint="Flows in window" />
+              <StatCard label="Open incidents" value={summary?.incidents_open ?? 0} />
+              <StatCard label="Alerts today" value={totalAlertsToday} />
+              <StatCard label="Avg risk" value={`${meanRiskPct}%`} />
+            </div>
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.6fr]">
-            <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <h2 className="text-lg font-medium text-white">Quick Actions</h2>
-              <p className="mt-1 text-sm text-muted">Jump to high-impact admin tasks.</p>
-              <div className="mt-4 grid gap-2">
-                <Link
-                  to="/dashboard/admin/users"
-                  className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white transition hover:bg-white/10"
-                >
-                  Manage users
-                </Link>
-                <Link
-                  to="/dashboard/admin/roles"
-                  className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white transition hover:bg-white/10"
-                >
-                  Manage roles
-                </Link>
-                <Link
-                  to="/dashboard/soc-health"
-                  className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white transition hover:bg-white/10"
-                >
-                  SOC health
-                </Link>
-              </div>
-            </article>
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_1.4fr]">
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <h2 className="text-lg font-medium text-white">Quick actions</h2>
+                <p className="mt-1 text-sm text-muted">Administrative control surface.</p>
+                <div className="mt-4 grid gap-2">
+                  {canViewUsers ? (
+                    <QuickAction to="/dashboard/admin/users" label="Manage users" description="Access control and onboarding." />
+                  ) : null}
+                  {hasPermission("view_roles") ? (
+                    <QuickAction to="/dashboard/admin/roles" label="Manage roles" description="RBAC roles and permissions." />
+                  ) : null}
+                  {canViewSocHealth ? (
+                    <QuickAction to="/dashboard/soc-health" label="System health" description="ML pipeline and monitoring." />
+                  ) : null}
+                  {hasPermission("view_models") ? (
+                    <QuickAction to="/dashboard/ml-confidence" label="ML operations" description="Model registry and confidence." />
+                  ) : null}
+                  <QuickAction to="/dashboard/settings" label="Platform settings" description="Operational configuration." />
+                </div>
+              </article>
 
-            <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <h2 className="text-lg font-medium text-white">Recent Alerts</h2>
-              <div className="mt-3 space-y-2">
-                {alerts.slice(0, 6).map((alert) => (
-                  <div key={alert.id} className="rounded-xl border border-white/10 bg-background/40 p-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="text-sm font-medium text-white">{alert.summary}</p>
-                        <p className="mt-1 text-xs text-muted">Traffic Record: {alert.traffic_record_id}</p>
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <h2 className="text-lg font-medium text-white">System alerts</h2>
+                {alertsLoading ? <p className="mt-2 text-sm text-muted">Loading alerts...</p> : null}
+                {alertsError ? <p className="mt-2 text-sm text-danger">{alertsError}</p> : null}
+                <div className="mt-3 space-y-2">
+                  {alerts.slice(0, 6).map((alert) => (
+                    <div key={alert.id} className="rounded-xl border border-white/10 bg-background/40 p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-medium text-white">{alert.summary}</p>
+                          <p className="mt-1 text-xs text-muted">Traffic Record: {alert.traffic_record_id}</p>
+                        </div>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs ${severityClasses(
+                            alert.severity === "critical" || alert.severity === "high"
+                              ? "High"
+                              : alert.severity === "medium"
+                              ? "Medium"
+                              : "Low"
+                          )}`}
+                        >
+                          {alert.severity.toUpperCase()}
+                        </span>
                       </div>
-                      <span className={`rounded-full px-2 py-0.5 text-xs ${severityClasses(alert.severity === "critical" ? "High" : alert.severity === "high" ? "High" : alert.severity === "medium" ? "Medium" : "Low")}`}>{alert.severity.toUpperCase()}</span>
+                      <p className="mt-2 text-xs text-muted">{new Date(alert.created_at).toLocaleString()}</p>
                     </div>
-                    <p className="mt-2 text-xs text-muted">{new Date(alert.created_at).toLocaleString()}</p>
+                  ))}
+                  {!alerts.length ? <p className="text-sm text-muted">No alerts recorded yet.</p> : null}
+                </div>
+              </article>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <h2 className="text-lg font-medium text-white">Onboarding status</h2>
+                <p className="mt-1 text-xs text-muted">Pending approvals and system scope changes.</p>
+                <div className="mt-3 space-y-2 text-sm">
+                  <div className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
+                    <span className="text-white">Pending requests</span>
+                    <span className="text-muted">{pendingOnboarding}</span>
                   </div>
-                ))}
-                {!alerts.length ? <p className="text-sm text-muted">No alerts recorded yet.</p> : null}
-              </div>
-            </article>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <h2 className="text-lg font-medium text-white">attack_class volume (taxonomy)</h2>
-              <p className="mt-1 text-xs text-muted">Flow counts by stored label — not a substitute for ml_status.</p>
-              <div className="mt-3 space-y-2 text-sm">
-                {topAttackClasses.map((entry) => (
-                  <div key={entry.label} className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
-                    <span className="text-white">{entry.label}</span>
-                    <span className="text-muted">{entry.value} flows</span>
+                  <div className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
+                    <span className="text-white">Devices registered</span>
+                    <span className="text-muted">{devices.length}</span>
                   </div>
-                ))}
-                {!topAttackClasses.length ? <p className="text-muted">No class data available yet.</p> : null}
-              </div>
-            </article>
-            <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <h2 className="text-lg font-medium text-white">ML snapshot (stored flows)</h2>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                  <p className="text-xs text-muted">Incidents open</p>
-                  <p className="mt-1 text-white">{summary?.incidents_open ?? 0}</p>
                 </div>
-                <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                  <p className="text-xs text-muted">Avg risk_score (DB)</p>
-                  <p className="mt-1 text-white">{meanRiskPct}%</p>
-                </div>
-                <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                  <p className="text-xs text-muted">Alerts</p>
-                  <p className="mt-1 text-white">{totalAlertsToday}</p>
-                </div>
-                <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                  <p className="text-xs text-muted">Top ml_status</p>
-                  <p className="mt-1 text-white">
-                    {Object.entries(summary?.ml_status_distribution ?? {})
-                      .sort((a, b) => b[1] - a[1])
-                      .slice(0, 2)
-                      .map(([k, v]) => `${k}: ${v}`)
-                      .join(" · ") || "—"}
-                  </p>
-                </div>
-              </div>
-            </article>
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-wide text-muted">Traffic records</p>
-              <p className="mt-2 text-3xl font-semibold text-white">{packetCount.toLocaleString()}</p>
-            </article>
-            <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-wide text-muted">Total Alerts Today</p>
-              <p className="mt-2 text-3xl font-semibold text-white">{totalAlertsToday}</p>
-            </article>
-            <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-wide text-muted">Active Threats</p>
-              <p className="mt-2 text-3xl font-semibold text-rose-200">{activeThreats}</p>
-            </article>
-          </div>
+              </article>
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-            <article className="rounded-2xl border border-white/10 bg-white/5 p-4 xl:col-span-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-lg font-medium text-white">ML status distribution (stored flows)</h2>
-                <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
-                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-rose-500" /> under_attack</span>
-                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-500" /> suspicious / unknown_degraded</span>
-                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-sky-500" /> other ML verdict</span>
-                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-slate-600" /> no_ml_output</span>
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <h2 className="text-lg font-medium text-white">ML status distribution</h2>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                  <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                    <p className="text-xs text-muted">Incidents open</p>
+                    <p className="mt-1 text-white">{summary?.incidents_open ?? 0}</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                    <p className="text-xs text-muted">Avg risk_score</p>
+                    <p className="mt-1 text-white">{meanRiskPct}%</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                    <p className="text-xs text-muted">Alerts</p>
+                    <p className="mt-1 text-white">{totalAlertsToday}</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                    <p className="text-xs text-muted">Top ml_status</p>
+                    <p className="mt-1 text-white">
+                      {Object.entries(summary?.ml_status_distribution ?? {})
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 2)
+                        .map(([k, v]) => `${k}: ${v}`)
+                        .join(" · ") || "—"}
+                    </p>
+                  </div>
                 </div>
-              </div>
+              </article>
+            </div>
+          </>
+        ) : role === "analyst" ? (
+          <>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <StatCard label="Active alerts" value={alerts.length} accent="text-rose-200" />
+              <StatCard label="High-risk detections" value={highAlerts} accent="text-amber-200" />
+              <StatCard label="Open incidents" value={summary?.incidents_open ?? 0} />
+              <StatCard label="Traffic records" value={packetCount.toLocaleString()} />
+            </div>
 
-              <div className="mt-4 grid grid-cols-12 items-end gap-2">
-                {mlStatusSeries.map((point) => (
-                  <div key={point.label} className="flex flex-col items-center gap-2">
-                    <div className="flex h-36 w-full max-w-8 items-end rounded-sm bg-background/40 p-[2px]">
-                      <div
-                        className={`w-full rounded-sm ${mlStatusBarClass(point.kind)}`}
-                        style={{
-                          height: `${Math.max(8, Math.min(100, Math.round((point.value / mlMax) * 100)))}%`
-                        }}
-                      />
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.4fr]">
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <h2 className="text-lg font-medium text-white">Quick actions</h2>
+                <p className="mt-1 text-sm text-muted">SOC workflows and investigation tools.</p>
+                <div className="mt-4 grid gap-2">
+                  <QuickAction to="/dashboard/alerts" label="Investigate alerts" description="Review and triage." />
+                  <QuickAction to="/dashboard/active-threats" label="Active threats" description="Critical/high activity." />
+                  <QuickAction to="/dashboard/packets-analysed" label="Review telemetry" description="Traffic trends." />
+                  <QuickAction to="/dashboard/mttr" label="Incident MTTR" description="Operational response time." />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <h2 className="text-lg font-medium text-white">Active threat queue</h2>
+                {threatsLoading ? <p className="mt-2 text-sm text-muted">Loading threats...</p> : null}
+                {threatsError ? <p className="mt-2 text-sm text-danger">{threatsError}</p> : null}
+                <div className="mt-3 space-y-2 text-sm">
+                  {activeThreats.slice(0, 6).map((threat) => (
+                    <div key={threat.threat_id} className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
+                      <span className="text-white">{threat.attack_vector}</span>
+                      <span className="text-rose-200">{threat.risk}</span>
                     </div>
-                    <span className="max-w-[4.5rem] truncate text-center text-[11px] text-muted" title={point.label}>
-                      {point.label}
-                    </span>
-                  </div>
-                ))}
-                {!mlStatusSeries.length ? (
-                  <p className="col-span-12 text-sm text-muted">No ML status aggregates yet.</p>
-                ) : null}
-              </div>
-            </article>
-          </div>
+                  ))}
+                  {!activeThreats.length ? <p className="text-sm text-muted">No active threats right now.</p> : null}
+                </div>
+              </article>
+            </div>
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <h2 className="text-lg font-medium text-white">Live Alerts</h2>
-              <div className="mt-3 space-y-2">
-                {alerts.slice(0, 6).map((alert) => (
-                  <div key={alert.id} className="rounded-xl border border-white/10 bg-background/40 p-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="text-sm font-medium text-white">{alert.summary}</p>
-                        <p className="mt-1 text-xs text-muted">Traffic Record: {alert.traffic_record_id}</p>
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <h2 className="text-lg font-medium text-white">Recent alerts</h2>
+                {alertsLoading ? <p className="mt-2 text-sm text-muted">Loading alerts...</p> : null}
+                {alertsError ? <p className="mt-2 text-sm text-danger">{alertsError}</p> : null}
+                <div className="mt-3 space-y-2">
+                  {alerts.slice(0, 6).map((alert) => (
+                    <div key={alert.id} className="rounded-xl border border-white/10 bg-background/40 p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-medium text-white">{alert.summary}</p>
+                          <p className="mt-1 text-xs text-muted">Traffic Record: {alert.traffic_record_id}</p>
+                        </div>
+                        <span className={`rounded-full px-2 py-0.5 text-xs ${severityClasses(alert.severity === "critical" || alert.severity === "high" ? "High" : alert.severity === "medium" ? "Medium" : "Low")}`}>{alert.severity.toUpperCase()}</span>
                       </div>
-                      <span className={`rounded-full px-2 py-0.5 text-xs ${severityClasses(alert.severity === "critical" ? "High" : alert.severity === "high" ? "High" : alert.severity === "medium" ? "Medium" : "Low")}`}>{alert.severity.toUpperCase()}</span>
+                      <p className="mt-2 text-xs text-muted">{new Date(alert.created_at).toLocaleString()}</p>
                     </div>
-                    <p className="mt-2 text-xs text-muted">{new Date(alert.created_at).toLocaleString()}</p>
+                  ))}
+                  {!alerts.length ? <p className="text-sm text-muted">No live alerts yet.</p> : null}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <h2 className="text-lg font-medium text-white">Telemetry & anomalies</h2>
+                {packetsLoading ? <p className="mt-2 text-sm text-muted">Loading telemetry...</p> : null}
+                {packetsError ? <p className="mt-2 text-sm text-danger">{packetsError}</p> : null}
+                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                  <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                    <p className="text-xs text-muted">Packets today</p>
+                    <p className="mt-1 text-white">{packets?.today_total ?? "—"}</p>
                   </div>
-                ))}
-                {!alerts.length ? <p className="text-sm text-muted">No live alerts yet.</p> : null}
-              </div>
-            </article>
+                  <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                    <p className="text-xs text-muted">Avg per minute</p>
+                    <p className="mt-1 text-white">{packets?.avg_per_minute ?? "—"}</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                    <p className="text-xs text-muted">Peak hour</p>
+                    <p className="mt-1 text-white">{packets?.peak_hour ?? "—"}</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                    <p className="text-xs text-muted">Top attack classes</p>
+                    <p className="mt-1 text-white">
+                      {attackClassSeries.map((entry) => entry.label).slice(0, 2).join(" · ") || "—"}
+                    </p>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </>
+        ) : role === "viewer" ? (
+          <>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <StatCard label="Monitored devices" value={devices.length} />
+              <StatCard label="Coverage" value={`${deviceCoverage}%`} hint={`${deviceActiveCount}/${devices.length} active`} />
+              <StatCard label="Alerts today" value={totalAlertsToday} accent="text-amber-200" />
+              <StatCard label="Traffic today" value={packets?.today_total ?? "—"} />
+            </div>
 
-            <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <h2 className="text-lg font-medium text-white">Recent Detections</h2>
-              <div className="mt-3 overflow-x-auto">
-                <table className="min-w-full text-left text-xs">
-                  <thead className="text-muted">
-                    <tr>
-                      <th className="pb-2 pr-3">Timestamp</th>
-                      <th className="pb-2 pr-3">Alert</th>
-                      <th className="pb-2 pr-3">Record</th>
-                      <th className="pb-2">Severity</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {alerts.slice(0, 8).map((alert) => (
-                      <tr key={alert.id} className="border-t border-white/10">
-                        <td className="py-2 pr-3 text-muted">{new Date(alert.created_at).toLocaleString()}</td>
-                        <td className="py-2 pr-3 text-muted">{alert.summary}</td>
-                        <td className="py-2 pr-3 text-muted">{alert.traffic_record_id}</td>
-                        <td className={`py-2 font-medium ${logClasses(alert.severity)}`}>{alert.severity.toUpperCase()}</td>
-                      </tr>
-                    ))}
-                    {!alerts.length ? (
-                      <tr>
-                        <td colSpan={4} className="py-3 text-muted">No detections recorded yet.</td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-            </article>
-          </div>
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <h2 className="text-lg font-medium text-white">Device monitoring summary</h2>
+                {devicesLoading ? <p className="mt-2 text-sm text-muted">Loading devices...</p> : null}
+                {devicesError ? <p className="mt-2 text-sm text-danger">{devicesError}</p> : null}
+                <div className="mt-3 space-y-2 text-sm">
+                  <div className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
+                    <span className="text-white">Active monitoring</span>
+                    <span className="text-muted">{deviceActiveCount}</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
+                    <span className="text-white">Inventory total</span>
+                    <span className="text-muted">{devices.length}</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
+                    <span className="text-white">Average risk</span>
+                    <span className="text-muted">{meanRiskPct}%</span>
+                  </div>
+                </div>
+              </article>
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <article className="rounded-2xl border border-white/10 bg-white/5 p-4 xl:col-span-2">
-              <h2 className="text-lg font-medium text-white">attack_class volume (taxonomy)</h2>
-              <p className="mt-1 text-xs text-muted">Operational labeling volume only.</p>
-              <div className="mt-3 space-y-2 text-sm">
-                {attackClassSeries.slice(0, 8).map((entry) => (
-                  <div key={entry.label} className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
-                    <span className="text-white">{entry.label}</span>
-                    <div className="flex w-40 items-center gap-2">
-                      <div className="h-2 flex-1 rounded-full bg-background/60">
-                        <div
-                          className={`h-2 rounded-full ${volumeBarClass()}`}
-                          style={{
-                            width: `${Math.max(
-                              4,
-                              Math.min(100, Math.round((entry.value / Math.max(1, attackClassSeries[0]?.value ?? 1)) * 100))
-                            )}%`
-                          }}
-                        />
-                      </div>
-                      <span className="text-xs text-muted">{entry.value}</span>
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <h2 className="text-lg font-medium text-white">Protocol distribution</h2>
+                {packetsLoading ? <p className="mt-2 text-sm text-muted">Loading telemetry...</p> : null}
+                {packetsError ? <p className="mt-2 text-sm text-danger">{packetsError}</p> : null}
+                <div className="mt-3 space-y-2 text-sm">
+                  {protocolMix.map((row) => (
+                    <div key={row.label} className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
+                      <span className="text-white">{row.label}</span>
+                      <span className="text-muted">{row.value.toLocaleString()}</span>
                     </div>
+                  ))}
+                  {!protocolMix.length ? <p className="text-sm text-muted">No protocol data yet.</p> : null}
+                </div>
+              </article>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <StatCard label="Registered assets" value={devices.length} />
+              <StatCard label="Coverage" value={`${deviceCoverage}%`} hint={`${deviceActiveCount}/${devices.length} active`} />
+              <StatCard label="Onboarding status" value={user?.onboardingStatus ?? "—"} />
+              <StatCard label="Telemetry today" value={packets?.today_total ?? "—"} />
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.2fr]">
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <h2 className="text-lg font-medium text-white">Quick actions</h2>
+                <p className="mt-1 text-sm text-muted">Manage your OT deployment.</p>
+                <div className="mt-4 grid gap-2">
+                  {canViewDevices ? (
+                    <QuickAction to="/dashboard/devices" label="Register assets" description="Add OT traffic sources." />
+                  ) : null}
+                  {canViewTraffic ? (
+                    <QuickAction to="/dashboard/packets-analysed" label="Telemetry coverage" description="Traffic ingestion summary." />
+                  ) : null}
+                  {canViewAlerts ? (
+                    <QuickAction to="/dashboard/alerts" label="Recent detections" description="Alerts in your environment." />
+                  ) : null}
+                  {canViewSocHealth ? (
+                    <QuickAction to="/dashboard/soc-health" label="Deployment status" description="Health and monitoring." />
+                  ) : null}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <h2 className="text-lg font-medium text-white">Asset coverage</h2>
+                {devicesLoading ? <p className="mt-2 text-sm text-muted">Loading assets...</p> : null}
+                {devicesError ? <p className="mt-2 text-sm text-danger">{devicesError}</p> : null}
+                <div className="mt-3 space-y-2 text-sm">
+                  {devices.slice(0, 5).map((device) => (
+                    <div key={device.id} className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
+                      <span className="text-white">{device.name}</span>
+                      <span className="text-muted">{device.monitoring_status}</span>
+                    </div>
+                  ))}
+                  {!devices.length ? <p className="text-sm text-muted">No devices registered yet.</p> : null}
+                </div>
+              </article>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <h2 className="text-lg font-medium text-white">Protocol usage</h2>
+                {packetsLoading ? <p className="mt-2 text-sm text-muted">Loading telemetry...</p> : null}
+                {packetsError ? <p className="mt-2 text-sm text-danger">{packetsError}</p> : null}
+                <div className="mt-3 space-y-2 text-sm">
+                  {protocolMix.map((row) => (
+                    <div key={row.label} className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
+                      <span className="text-white">{row.label}</span>
+                      <span className="text-muted">{row.value.toLocaleString()}</span>
+                    </div>
+                  ))}
+                  {!protocolMix.length ? <p className="text-sm text-muted">No protocol data yet.</p> : null}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <h2 className="text-lg font-medium text-white">ML status overview</h2>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                  <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                    <p className="text-xs text-muted">Alerts</p>
+                    <p className="mt-1 text-white">{totalAlertsToday}</p>
                   </div>
-                ))}
-                {!attackClassSeries.length ? <p className="text-muted">No class data available yet.</p> : null}
-              </div>
-            </article>
-          </div>
-        </>
-      )}
-    </section>
-  );
+                  <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                    <p className="text-xs text-muted">Avg risk</p>
+                    <p className="mt-1 text-white">{meanRiskPct}%</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                    <p className="text-xs text-muted">Traffic records</p>
+                    <p className="mt-1 text-white">{packetCount.toLocaleString()}</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                    <p className="text-xs text-muted">Top ML status</p>
+                    <p className="mt-1 text-white">
+                      {Object.entries(summary?.ml_status_distribution ?? {})
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 1)
+                        .map(([k]) => k)
+                        .join(" ") || "—"}
+                    </p>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </>
+        )}
+      </section>
+    );
 }

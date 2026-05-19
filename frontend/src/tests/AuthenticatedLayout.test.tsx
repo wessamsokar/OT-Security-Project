@@ -2,19 +2,44 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AuthenticatedLayout } from "../layouts/AuthenticatedLayout";
-import * as authSession from "../lib/authSession";
 
 declare global {
   var ResizeObserver: typeof window.ResizeObserver;
 }
 
-// Mock authSession
-vi.mock("../lib/authSession", () => ({
-  getUserRole: vi.fn(),
-  hasRole: vi.fn(),
-  getAuthSession: vi.fn(),
-  isAuthenticated: vi.fn(),
-  clearAuthSession: vi.fn()
+const mockHasPermission = vi.fn();
+
+vi.mock("../contexts/AuthContext", () => ({
+  useAuth: () => ({
+    user: {
+      id: "1",
+      email: "admin@example.com",
+      fullName: "Admin User",
+      role: "admin",
+      onboardingStatus: "approved",
+      permissions: ["view_dashboard", "view_alerts", "view_devices", "view_roles", "view_users"]
+    },
+    isLoading: false,
+    isAuthenticated: true,
+    setUser: vi.fn(),
+    refresh: vi.fn(),
+    clearSession: vi.fn(),
+    hasPermission: mockHasPermission,
+    hasRole: vi.fn(() => true)
+  })
+}));
+
+vi.mock("../contexts/OnboardingAccessContext", () => ({
+  useOnboardingAccess: () => ({
+    status: "approved",
+    isLoading: false,
+    refresh: async () => undefined
+  }),
+  useOptionalOnboardingAccess: () => ({
+    status: "approved",
+    isLoading: false,
+    refresh: async () => undefined
+  })
 }));
 
 // Mock ResizeObserver for Framer Motion / UI components
@@ -27,9 +52,7 @@ window.ResizeObserver = class ResizeObserver {
 describe("AuthenticatedLayout", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    vi.mocked(authSession.getUserRole).mockReturnValue("admin");
-    vi.mocked(authSession.hasRole).mockReturnValue(true);
-    vi.mocked(authSession.isAuthenticated).mockReturnValue(true);
+    mockHasPermission.mockReturnValue(true);
   });
 
   it("renders the Navbar but hides the Sidebar by default", () => {

@@ -1,27 +1,40 @@
 import json
+import os
+from http.cookiejar import CookieJar
 from urllib import request
 
-BASE = "http://localhost:8080/api/v1"
+BASE = os.environ.get("ICS_API_BASE", "http://localhost:8080/api/v1").rstrip("/")
+USERNAME = os.environ.get("ICS_TEST_USERNAME", "admin")
+PASSWORD = os.environ.get("ICS_TEST_PASSWORD")
+COOKIE_JAR = CookieJar()
+OPENER = request.build_opener(request.HTTPCookieProcessor(COOKIE_JAR))
+CSRF_TOKEN: str | None = None
 
 
-def http_json(method: str, url: str, payload: dict | None = None, token: str | None = None) -> dict:
+def http_json(method: str, url: str, payload: dict | None = None) -> dict:
     body = json.dumps(payload).encode("utf-8") if payload else None
     headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    if method.upper() in {"POST", "PUT", "PATCH", "DELETE"} and CSRF_TOKEN:
+        headers["X-CSRF-Token"] = CSRF_TOKEN
 
     req = request.Request(url=url, data=body, headers=headers, method=method)
-    with request.urlopen(req, timeout=20) as resp:
+    with OPENER.open(req, timeout=20) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
 def run() -> None:
-    login_resp = http_json(
+    global CSRF_TOKEN
+    if not PASSWORD:
+        raise SystemExit("Set ICS_TEST_PASSWORD before running this integration test.")
+
+    csrf = http_json("GET", f"{BASE}/auth/csrf")
+    CSRF_TOKEN = csrf["csrf_token"]
+
+    http_json(
         "POST",
         f"{BASE}/auth/login",
-        {"username": "admin", "password": "admin123"},
+        {"username": USERNAME, "password": PASSWORD},
     )
-    token = login_resp["access_token"]
 
     ingest_payload = {
         "source_ip": "10.0.0.10",
@@ -42,14 +55,14 @@ def run() -> None:
         "metadata_json": {"asset": "PLC-A"},
     }
 
-    ingest = http_json("POST", f"{BASE}/traffic/ingest", ingest_payload, token)
+    ingest = http_json("POST", f"{BASE}/traffic/ingest", ingest_payload)
     record_id = ingest["id"]
 
-    detect = http_json("POST", f"{BASE}/traffic/{record_id}/detect", None, token)
+    detect = http_json("POST", f"{BASE}/traffic/{record_id}/detect")
 
-    http_json("GET", f"{BASE}/alerts", None, token)
+    http_json("GET", f"{BASE}/alerts")
 
-    http_json("POST", f"{BASE}/model/retrain", None, token)
+    http_json("POST", f"{BASE}/model/retrain")
 
     print("Integration test passed")
     print("Detection:", detect)

@@ -1,9 +1,11 @@
 import type { LucideIcon } from "lucide-react";
-import { ChevronDown, Cpu, Layers3, Radar, Shield, Sparkles, Wifi } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ChevronDown, Cpu, Radar, Shield, Sparkles } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../ui/Button";
 import { InputField } from "../ui/InputField";
+import { RelationshipPanel } from "./RelationshipPanel";
+import type { RelationshipPanelRef } from "./RelationshipPanel";
 
 import {
   ASSET_TYPE_OPTIONS,
@@ -14,6 +16,7 @@ import {
   TRAFFIC_SOURCE_OPTIONS
 } from "./otAssetOptions";
 import type { OtTrafficSourceFormValues } from "./otAssetMetadata";
+import type { DeviceResponse } from "../../api/devicesApi";
 
 const SELECT_ROW =
   "w-full rounded-xl border border-white/15 bg-[#0c152d]/80 px-2.5 py-2 text-sm text-text outline-none transition focus:border-brand/70 focus:ring-2 focus:ring-brand/20";
@@ -29,6 +32,39 @@ function SectionHeader({ icon: Icon, title, subtitle }: { icon: LucideIcon; titl
         <p className="text-xs text-muted">{subtitle}</p>
       </div>
     </div>
+  );
+}
+
+function SoftToggle({
+  id,
+  label,
+  hint,
+  checked,
+  onChange
+}: {
+  id: string;
+  label: string;
+  hint: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label
+      htmlFor={id}
+      className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2 text-xs text-muted"
+    >
+      <span className="min-w-0">
+        <span className="block text-sm font-medium text-text">{label}</span>
+        <span className="block text-[11px] text-muted">{hint}</span>
+      </span>
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="h-4 w-4 shrink-0 cursor-pointer rounded border-white/25 bg-[#0c152d]/80 accent-brand"
+      />
+    </label>
   );
 }
 
@@ -80,29 +116,58 @@ type Props = {
   isEditing: boolean;
   /** Latest server-side ML aggregates for this inventory row (edit only). */
   mlSnapshot?: DeviceMlSnapshot;
+  existingDevices: DeviceResponse[];
+  editingId?: number | null;
   form: OtTrafficSourceFormValues;
   setForm: React.Dispatch<React.SetStateAction<OtTrafficSourceFormValues>>;
   saving: boolean;
   formError: string;
   onSubmit: () => void;
   onClose: () => void;
+  /** Called whenever edge mutations occur, so the parent can refresh the topology store. */
+  onEdgesChanged?: () => void;
+  /** Exposes the RelationshipPanel imperative ref to the parent (needed for create-mode flush). */
+  onPanelRef?: (ref: RelationshipPanelRef) => void;
 };
 
 export function OtTrafficSourceModal({
   open,
   isEditing,
   mlSnapshot,
+  existingDevices,
+  editingId,
   form,
   setForm,
   saving,
   formError,
   onSubmit,
-  onClose
+  onClose,
+  onEdgesChanged,
+  onPanelRef
 }: Props) {
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const protocolTouchedRef = useRef(false);
+  const monitoringModeTouchedRef = useRef(false);
   useEffect(() => {
-    if (open) setShowAdvanced(false);
+    if (open) {
+      setShowAdvanced(false);
+      protocolTouchedRef.current = false;
+      monitoringModeTouchedRef.current = false;
+    }
   }, [open]);
+
+  const inferProtocolFromPort = (port: string): string | null => {
+    const trimmed = port.trim();
+    if (!trimmed) return null;
+    const hit = PROTOCOL_OPTIONS.find((p) => p.defaultPort === trimmed);
+    return hit?.value ?? null;
+  };
+
+  const resolveMonitoringMode = (assetType: string) => {
+    const passiveTypes = new Set(["PLC", "RTU", "HMI", "SCADA_Server", "Historian", "Sensor"]);
+    if (passiveTypes.has(assetType)) return "Passive";
+    return "Active";
+  };
 
   const protocolLabel =
     PROTOCOL_OPTIONS.find((p) => p.value === form.protocolType)?.label.replace("/", " / ") ?? form.protocolType;
@@ -128,14 +193,13 @@ export function OtTrafficSourceModal({
             <div>
               <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-brand">
                 <Sparkles size={14} className="text-brand drop-shadow-[0_0_10px_rgba(168,85,247,0.85)]" />
-                OT telemetry onboarding
+                Quick add device
               </div>
               <h2 id="ot-register-title" className="mt-1.5 text-lg font-semibold text-white md:text-xl">
-                {isEditing ? "Edit traffic source" : "Register OT traffic source"}
+                {isEditing ? "Edit OT device" : "Register OT device"}
               </h2>
               <p className="mt-1 max-w-xl text-xs leading-relaxed text-muted md:text-sm">
-                Add a monitored OT asset for protocol-aware traffic ingestion, security telemetry, and ML-based attack
-                analytics.
+                Add a device in seconds. Advanced tuning stays optional until you need it.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -156,19 +220,15 @@ export function OtTrafficSourceModal({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-5 [scrollbar-gutter:stable]">
-          <div className="grid gap-4 lg:grid-cols-2 lg:gap-x-5 lg:gap-y-4">
-            <div className="space-y-4 rounded-2xl border border-white/10 bg-[#0c152d]/35 p-4 shadow-inner shadow-black/20 lg:col-span-2">
-              <SectionHeader
-                icon={Cpu}
-                title="A · Asset information"
-                subtitle="Industrial identity, criticality, and site context."
-              />
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 lg:gap-x-4 lg:gap-y-3">
-                <div className="sm:col-span-2 lg:col-span-1">
+          <div className="space-y-4">
+            <div className="space-y-4 rounded-2xl border border-white/10 bg-[#0c152d]/35 p-4 shadow-inner shadow-black/20">
+              <SectionHeader icon={Cpu} title="Quick add device" subtitle="Required fields only." />
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="sm:col-span-2 lg:col-span-2">
                   <InputField
                     compact
                     id="ot-asset-name"
-                    label="Asset name *"
+                    label="Device name *"
                     placeholder="PLC-Substation-01"
                     value={form.name}
                     onChange={(value) => setForm((p) => ({ ...p, name: value }))}
@@ -176,17 +236,21 @@ export function OtTrafficSourceModal({
                 </div>
                 <div>
                   <label htmlFor="ot-asset-type" className="block min-w-0">
-                    <span className="mb-1 block text-xs text-muted sm:text-sm">Asset type *</span>
+                    <span className="mb-1 block text-xs text-muted sm:text-sm">Device type *</span>
                     <select
                       id="ot-asset-type"
                       className={SELECT_ROW}
                       value={form.assetType}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const nextType = e.target.value;
                         setForm((p) => ({
                           ...p,
-                          assetType: e.target.value
-                        }))
-                      }
+                          assetType: nextType,
+                          monitoringMode: monitoringModeTouchedRef.current
+                            ? p.monitoringMode
+                            : resolveMonitoringMode(nextType)
+                        }));
+                      }}
                     >
                       {ASSET_TYPE_OPTIONS.map((o) => (
                         <option key={o.value} value={o.value}>
@@ -197,74 +261,8 @@ export function OtTrafficSourceModal({
                   </label>
                 </div>
                 <div>
-                  <label htmlFor="ot-criticality" className="block min-w-0">
-                    <span className="mb-1 block text-xs text-muted sm:text-sm">Criticality level</span>
-                    <select
-                      id="ot-criticality"
-                      className={SELECT_ROW}
-                      value={form.criticalityLevel}
-                      onChange={(e) => setForm((p) => ({ ...p, criticalityLevel: e.target.value }))}
-                    >
-                      {CRITICALITY_OPTIONS.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <div className="sm:col-span-2">
-                  <InputField
-                    compact
-                    id="ot-site-loc"
-                    label="Site / location"
-                    placeholder="Substation North — Bay 2"
-                    value={form.siteLocation}
-                    onChange={(value) => setForm((p) => ({ ...p, siteLocation: value }))}
-                  />
-                </div>
-                <div className="sm:col-span-2 lg:col-span-3">
-                  <label htmlFor="ot-desc" className="block">
-                    <span className="mb-1 block text-xs text-muted sm:text-sm">Device description</span>
-                    <textarea
-                      id="ot-desc"
-                      rows={2}
-                      placeholder="e.g. Modbus PLC handling feeder protection; passive SPAN on control VLAN."
-                      value={form.description}
-                      onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
-                      className="min-h-[3.25rem] w-full resize-y rounded-xl border border-white/15 bg-[#0c152d]/80 px-2.5 py-2 text-sm leading-snug text-text outline-none transition placeholder:text-muted/70 focus:border-brand/70 focus:ring-2 focus:ring-brand/20"
-                    />
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-3 rounded-2xl border border-white/10 bg-[#0c152d]/35 p-4 shadow-inner shadow-black/20 lg:col-span-1">
-              <SectionHeader
-                icon={Layers3}
-                title="B · Network configuration"
-                subtitle="Connectivity, protocol context, and segmentation zone."
-              />
-              <div className="space-y-2.5">
-                <InputField
-                  compact
-                  id="ot-ip"
-                  label="IP address"
-                  placeholder="10.0.1.12"
-                  value={form.ipAddress}
-                  onChange={(value) => setForm((p) => ({ ...p, ipAddress: value }))}
-                />
-                <InputField
-                  compact
-                  id="ot-mac"
-                  label="MAC address (optional)"
-                  placeholder="00:1A:2B:3C:4D:5E"
-                  value={form.macAddress}
-                  onChange={(value) => setForm((p) => ({ ...p, macAddress: value }))}
-                />
-                <div>
                   <label htmlFor="ot-protocol" className="block">
-                    <span className="mb-1 block text-xs text-muted sm:text-sm">Protocol type</span>
+                    <span className="mb-1 block text-xs text-muted sm:text-sm">Protocol *</span>
                     <select
                       id="ot-protocol"
                       className={SELECT_ROW}
@@ -272,6 +270,7 @@ export function OtTrafficSourceModal({
                       onChange={(e) => {
                         const next = e.target.value;
                         const def = PROTOCOL_OPTIONS.find((p) => p.value === next)?.defaultPort;
+                        protocolTouchedRef.current = true;
                         setForm((p) => ({
                           ...p,
                           protocolType: next,
@@ -288,17 +287,29 @@ export function OtTrafficSourceModal({
                     </select>
                   </label>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="sm:col-span-2">
                   <InputField
                     compact
-                    id="ot-port"
-                    label="Port"
-                    placeholder="502"
-                    value={form.portNumber}
-                    onChange={(value) => setForm((p) => ({ ...p, portNumber: value }))}
+                    id="ot-ip"
+                    label="IP address *"
+                    placeholder="10.0.1.12"
+                    value={form.ipAddress}
+                    onChange={(value) => setForm((p) => ({ ...p, ipAddress: value }))}
                   />
+                </div>
+                <div>
+                  <InputField
+                    compact
+                    id="ot-site-loc"
+                    label="Site / zone (optional)"
+                    placeholder="Substation North"
+                    value={form.siteLocation}
+                    onChange={(value) => setForm((p) => ({ ...p, siteLocation: value }))}
+                  />
+                </div>
+                <div>
                   <label htmlFor="ot-zone" className="block min-w-0">
-                    <span className="mb-1 block text-xs text-muted sm:text-sm">Network zone</span>
+                    <span className="mb-1 block text-xs text-muted sm:text-sm">Network zone (optional)</span>
                     <select
                       id="ot-zone"
                       className={SELECT_ROW}
@@ -313,128 +324,26 @@ export function OtTrafficSourceModal({
                     </select>
                   </label>
                 </div>
-                <div className="flex flex-wrap gap-2 pt-1 text-[11px] text-muted">
-                  <span className="inline-flex items-center gap-1 rounded-full border border-white/12 bg-white/5 px-2 py-0.5">
-                    <Wifi size={11} /> Passive monitoring baseline
-                  </span>
-                  <span className="inline-flex items-center gap-1 rounded-full border border-white/12 bg-white/5 px-2 py-0.5">
-                    <Radar size={11} /> {protocolLabel}
-                  </span>
-                </div>
               </div>
-            </div>
-
-            <div className="space-y-3 rounded-2xl border border-white/10 bg-[#0c152d]/35 p-4 shadow-inner shadow-black/20 lg:col-span-1">
-              <SectionHeader icon={Radar} title="C · Traffic monitoring" subtitle="Capture mode, ingestion path, telemetry rate." />
-              <div className="space-y-2.5">
-                <label htmlFor="ot-source-type" className="block">
-                  <span className="mb-1 block text-xs text-muted sm:text-sm">Traffic source type</span>
-                  <select
-                    id="ot-source-type"
-                    className={SELECT_ROW}
-                    value={form.trafficSourceType}
-                    onChange={(e) => setForm((p) => ({ ...p, trafficSourceType: e.target.value }))}
-                  >
-                    {TRAFFIC_SOURCE_OPTIONS.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label htmlFor="ot-mon-mode" className="block">
-                  <span className="mb-1 block text-xs text-muted sm:text-sm">Monitoring mode</span>
-                  <select
-                    id="ot-mon-mode"
-                    className={SELECT_ROW}
-                    value={form.monitoringMode}
-                    onChange={(e) => setForm((p) => ({ ...p, monitoringMode: e.target.value }))}
-                  >
-                    {MONITORING_MODE_OPTIONS.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <InputField
-                  compact
-                  id="ot-rate"
-                  label="Expected traffic rate"
-                  placeholder="Low (< 100 pps baseline)"
-                  value={form.expectedTrafficRate}
-                  onChange={(value) => setForm((p) => ({ ...p, expectedTrafficRate: value }))}
-                />
-                <GlowToggle
+              <div className="pt-1">
+                <SoftToggle
                   id="ot-pcap"
-                  label="Packet capture enabled"
-                  description="Retain PCAP-capable ingestion for offline analyst replay (SOC policy dependent)."
+                  label="Packet capture"
+                  hint="Keep PCAP capture available for investigations (SOC policy dependent)."
                   checked={form.packetCaptureEnabled}
                   onChange={(v) => setForm((p) => ({ ...p, packetCaptureEnabled: v }))}
                 />
               </div>
             </div>
 
-            <div className="space-y-3 rounded-2xl border border-white/10 bg-[#0c152d]/35 p-4 shadow-inner shadow-black/20 lg:col-span-2">
-              <SectionHeader icon={Shield} title="D · Security & detection" subtitle="ML pipeline participation and realtime SOC visibility." />
-              <div className="grid gap-3 md:grid-cols-2">
-                <GlowToggle
-                  id="ot-ml"
-                  label="ML threat detection"
-                  description="Include this asset in supervised ML anomaly & attack classification."
-                  checked={form.mlThreatDetection}
-                  onChange={(v) => setForm((p) => ({ ...p, mlThreatDetection: v }))}
-                />
-                <GlowToggle
-                  id="ot-rt"
-                  label="Real-time monitoring"
-                  description="Streaming telemetry pathway for alerting and incident timelines."
-                  checked={form.realtimeMonitoring}
-                  onChange={(v) => setForm((p) => ({ ...p, realtimeMonitoring: v }))}
-                />
-                <div className="md:col-span-2 flex flex-col gap-2 rounded-xl border border-brand/25 bg-brand/5 px-3 py-3">
-                  <div className="flex items-center gap-2 text-sm font-medium text-white">
-                    <Shield size={18} className="text-brand" />
-                    ML risk &amp; status (read-only)
-                  </div>
-                  {isEditing && mlSnapshot && (mlSnapshot.last_ml_risk_score != null || mlSnapshot.last_ml_status) ? (
-                    <div className="flex flex-wrap items-end justify-between gap-3 text-sm">
-                      <div>
-                        <p className="text-[11px] uppercase tracking-wide text-muted">Risk score</p>
-                        <p className="text-xl font-semibold text-brand">
-                          {mlSnapshot.last_ml_risk_score != null
-                            ? `${(mlSnapshot.last_ml_risk_score * 100).toFixed(1)}%`
-                            : "—"}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-[11px] uppercase tracking-wide text-muted">ML status</p>
-                        <p className="font-medium capitalize text-text">{formatMlStatusLabel(mlSnapshot.last_ml_status)}</p>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="text-[11px] leading-relaxed text-muted">
-                      Scores and anomaly class are produced only by the platform ML pipeline after matching traffic is
-                      ingested and analyzed. Register the asset IP so flows can bind to this inventory record.
-                    </p>
-                  )}
-                </div>
-                <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-white/12 bg-white/[0.02] px-3 py-2 text-sm text-muted md:col-span-2">
-                  <input
-                    type="checkbox"
-                    checked={form.isActive}
-                    onChange={(e) => setForm((p) => ({ ...p, isActive: e.target.checked }))}
-                    className="h-4 w-4 shrink-0 rounded border-white/20 bg-[#0c152d]/80 text-brand accent-brand"
-                  />
-                  <span className="text-xs leading-snug md:text-sm">
-                    Mark traffic source operational in workspace inventory. Live monitoring state is assigned by the
-                    backend from observed traffic and ML results.
-                  </span>
-                </label>
-              </div>
-            </div>
+            <RelationshipPanel
+              deviceId={editingId ?? null}
+              existingDevices={existingDevices}
+              onEdgesChanged={onEdgesChanged}
+              onPanelRef={onPanelRef}
+            />
 
-            <div className="rounded-2xl border border-dashed border-white/15 bg-white/[0.02] lg:col-span-2">
+            <div className="rounded-2xl border border-dashed border-white/15 bg-white/[0.02]">
               <button
                 type="button"
                 className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium text-text transition hover:bg-white/5"
@@ -453,18 +362,238 @@ export function OtTrafficSourceModal({
                 </span>
               </button>
               {showAdvanced ? (
-                <div className="border-t border-white/10 px-4 pb-4 pt-3">
-                  <textarea
-                    rows={5}
-                    value={form.advancedMetadataJson}
-                    onChange={(e) => setForm((p) => ({ ...p, advancedMetadataJson: e.target.value }))}
-                    placeholder='{ "collector_id": "edge-41", "span_port": "Gi1/0/48" }'
-                    className="w-full resize-y rounded-xl border border-white/15 bg-[#0c152d]/80 px-3 py-2.5 font-mono text-xs text-text outline-none focus:border-brand/60 focus:ring-2 focus:ring-brand/15"
-                  />
-                  <p className="mt-2 text-[11px] text-muted">
-                    Merged beneath structured ingestion fields — duplicate keys adopt the onboarding form values shown
-                    above.
-                  </p>
+                <div className="border-t border-white/10 px-4 pb-4 pt-4">
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="space-y-3 rounded-2xl border border-white/10 bg-[#0c152d]/35 p-4">
+                      <SectionHeader icon={Radar} title="Network & telemetry" subtitle="Optional tuning and capture details." />
+                      <InputField
+                        compact
+                        id="ot-mac"
+                        label="MAC address"
+                        placeholder="00:1A:2B:3C:4D:5E"
+                        value={form.macAddress}
+                        onChange={(value) => setForm((p) => ({ ...p, macAddress: value }))}
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        <InputField
+                          compact
+                          id="ot-port"
+                          label="Port"
+                          placeholder="502"
+                          value={form.portNumber}
+                          onChange={(value) => {
+                            const inferred = protocolTouchedRef.current ? null : inferProtocolFromPort(value);
+                            setForm((p) => ({
+                              ...p,
+                              portNumber: value,
+                              protocolType: inferred ?? p.protocolType
+                            }));
+                          }}
+                        />
+                        <label htmlFor="ot-source-type" className="block">
+                          <span className="mb-1 block text-xs text-muted sm:text-sm">Traffic source</span>
+                          <select
+                            id="ot-source-type"
+                            className={SELECT_ROW}
+                            value={form.trafficSourceType}
+                            onChange={(e) => setForm((p) => ({ ...p, trafficSourceType: e.target.value }))}
+                          >
+                            {TRAFFIC_SOURCE_OPTIONS.map((t) => (
+                              <option key={t} value={t}>
+                                {t}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label htmlFor="ot-mon-mode" className="block">
+                          <span className="mb-1 block text-xs text-muted sm:text-sm">Monitoring mode</span>
+                          <select
+                            id="ot-mon-mode"
+                            className={SELECT_ROW}
+                            value={form.monitoringMode}
+                            onChange={(e) => {
+                              monitoringModeTouchedRef.current = true;
+                              setForm((p) => ({ ...p, monitoringMode: e.target.value }));
+                            }}
+                          >
+                            {MONITORING_MODE_OPTIONS.map((m) => (
+                              <option key={m} value={m}>
+                                {m}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <InputField
+                          compact
+                          id="ot-rate"
+                          label="Expected traffic rate"
+                          placeholder="Low (< 100 pps baseline)"
+                          value={form.expectedTrafficRate}
+                          onChange={(value) => setForm((p) => ({ ...p, expectedTrafficRate: value }))}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 rounded-2xl border border-white/10 bg-[#0c152d]/35 p-4">
+                      <SectionHeader icon={Shield} title="Security & status" subtitle="Defaults are safe for onboarding." />
+                      <div className="grid gap-2">
+                        <GlowToggle
+                          id="ot-ml"
+                          label="ML threat detection"
+                          description="Enabled by default for this asset."
+                          checked={form.mlThreatDetection}
+                          onChange={(v) => setForm((p) => ({ ...p, mlThreatDetection: v }))}
+                        />
+                        <GlowToggle
+                          id="ot-rt"
+                          label="Real-time monitoring"
+                          description="Enabled by default for alerting and timelines."
+                          checked={form.realtimeMonitoring}
+                          onChange={(v) => setForm((p) => ({ ...p, realtimeMonitoring: v }))}
+                        />
+                        <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-white/12 bg-white/[0.02] px-3 py-2 text-xs text-muted">
+                          <input
+                            type="checkbox"
+                            checked={form.isActive}
+                            onChange={(e) => setForm((p) => ({ ...p, isActive: e.target.checked }))}
+                            className="h-4 w-4 shrink-0 rounded border-white/20 bg-[#0c152d]/80 text-brand accent-brand"
+                          />
+                          <span className="leading-snug">
+                            Mark device operational in inventory. Monitoring status updates automatically from traffic.
+                          </span>
+                        </label>
+                      </div>
+                      {isEditing ? (
+                        <div className="rounded-xl border border-white/12 bg-white/[0.03] px-3 py-3 text-[11px] text-muted">
+                          <p className="mb-1 text-xs font-medium text-white">ML status</p>
+                          {mlSnapshot && (mlSnapshot.last_ml_risk_score != null || mlSnapshot.last_ml_status) ? (
+                            <div className="flex flex-wrap items-end justify-between gap-3">
+                              <div>
+                                <p className="text-[10px] uppercase tracking-wide text-muted">Risk</p>
+                                <p className="text-lg font-semibold text-brand">
+                                  {mlSnapshot.last_ml_risk_score != null
+                                    ? `${(mlSnapshot.last_ml_risk_score * 100).toFixed(1)}%`
+                                    : "—"}
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-[10px] uppercase tracking-wide text-muted">Status</p>
+                                <p className="font-medium capitalize text-text">
+                                  {formatMlStatusLabel(mlSnapshot.last_ml_status)}
+                                </p>
+                              </div>
+                            </div>
+                          ) : (
+                            <p>ML signals appear after traffic is observed.</p>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="space-y-3 rounded-2xl border border-white/10 bg-[#0c152d]/35 p-4">
+                      <SectionHeader icon={Cpu} title="Asset context" subtitle="Optional device context." />
+                      <div className="grid gap-3">
+                        <label htmlFor="ot-criticality" className="block min-w-0">
+                          <span className="mb-1 block text-xs text-muted sm:text-sm">Criticality</span>
+                          <select
+                            id="ot-criticality"
+                            className={SELECT_ROW}
+                            value={form.criticalityLevel}
+                            onChange={(e) => setForm((p) => ({ ...p, criticalityLevel: e.target.value }))}
+                          >
+                            {CRITICALITY_OPTIONS.map((c) => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label htmlFor="ot-desc" className="block">
+                          <span className="mb-1 block text-xs text-muted sm:text-sm">Device notes</span>
+                          <textarea
+                            id="ot-desc"
+                            rows={2}
+                            placeholder="Optional device context for analysts"
+                            value={form.description}
+                            onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
+                            className="min-h-[3rem] w-full resize-y rounded-xl border border-white/15 bg-[#0c152d]/80 px-2.5 py-2 text-sm leading-snug text-text outline-none transition placeholder:text-muted/70 focus:border-brand/70 focus:ring-2 focus:ring-brand/20"
+                          />
+                        </label>
+                      </div>
+                    </div>
+
+                    {topologyDevices.length > 0 ? (
+                      <div className="space-y-3 rounded-2xl border border-white/10 bg-[#0c152d]/35 p-4">
+                        <SectionHeader icon={Radar} title="Topology" subtitle="Optional relationships (visible when inventory exists)." />
+                        <div className="grid gap-2">
+                          <label htmlFor="ot-connected" className="block">
+                            <span className="mb-1 block text-xs text-muted sm:text-sm">Connected to</span>
+                            <select
+                              id="ot-connected"
+                              className={SELECT_ROW}
+                              value={form.connectedToDeviceId}
+                              onChange={(e) => setForm((p) => ({ ...p, connectedToDeviceId: e.target.value }))}
+                            >
+                              <option value="">None</option>
+                              {topologyDevices.map((device) => (
+                                <option key={device.id} value={String(device.id)}>
+                                  {device.name} {device.ip_address ? `(${device.ip_address})` : ""}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label htmlFor="ot-parent" className="block">
+                            <span className="mb-1 block text-xs text-muted sm:text-sm">Parent device</span>
+                            <select
+                              id="ot-parent"
+                              className={SELECT_ROW}
+                              value={form.parentDeviceId}
+                              onChange={(e) => setForm((p) => ({ ...p, parentDeviceId: e.target.value }))}
+                            >
+                              <option value="">None</option>
+                              {topologyDevices.map((device) => (
+                                <option key={device.id} value={String(device.id)}>
+                                  {device.name} {device.ip_address ? `(${device.ip_address})` : ""}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label htmlFor="ot-peer" className="block">
+                            <span className="mb-1 block text-xs text-muted sm:text-sm">Network peer</span>
+                            <select
+                              id="ot-peer"
+                              className={SELECT_ROW}
+                              value={form.networkPeerId}
+                              onChange={(e) => setForm((p) => ({ ...p, networkPeerId: e.target.value }))}
+                            >
+                              <option value="">None</option>
+                              {topologyDevices.map((device) => (
+                                <option key={device.id} value={String(device.id)}>
+                                  {device.name} {device.ip_address ? `(${device.ip_address})` : ""}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="rounded-2xl border border-white/10 bg-[#0c152d]/35 p-4 lg:col-span-2">
+                      <SectionHeader icon={Cpu} title="Advanced metadata" subtitle="Optional JSON for integrations." />
+                      <textarea
+                        rows={5}
+                        value={form.advancedMetadataJson}
+                        onChange={(e) => setForm((p) => ({ ...p, advancedMetadataJson: e.target.value }))}
+                        placeholder='{ "collector_id": "edge-41", "span_port": "Gi1/0/48" }'
+                        className="w-full resize-y rounded-xl border border-white/15 bg-[#0c152d]/80 px-3 py-2.5 font-mono text-xs text-text outline-none focus:border-brand/60 focus:ring-2 focus:ring-brand/15"
+                      />
+                      <p className="mt-2 text-[11px] text-muted">
+                        Structured onboarding values override duplicate JSON keys.
+                      </p>
+                    </div>
+                  </div>
                 </div>
               ) : null}
             </div>

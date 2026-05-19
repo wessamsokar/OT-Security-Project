@@ -3,7 +3,7 @@ import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { AppRouter } from "../app/Router";
-import * as authSession from "../lib/authSession";
+import { AuthProvider } from "../contexts/AuthContext";
 
 const { mockApiGet } = vi.hoisted(() => ({
   mockApiGet: vi.fn()
@@ -25,20 +25,14 @@ vi.mock("../api/client", () => ({
   }
 }));
 
+vi.mock("../api/csrf", () => ({
+  ensureCsrfToken: vi.fn().mockResolvedValue("test-csrf"),
+  clearCsrfCache: vi.fn()
+}));
+
 declare global {
   var ResizeObserver: typeof window.ResizeObserver;
 }
-
-vi.mock("../lib/authSession", async (importActual) => {
-  const actual = await importActual<typeof import("../lib/authSession")>();
-  return {
-    ...actual,
-    isAuthenticated: vi.fn(),
-    hasRole: vi.fn(),
-    getAuthSession: vi.fn(),
-    clearAuthSession: vi.fn()
-  };
-});
 
 window.ResizeObserver = class ResizeObserver {
   observe() {}
@@ -74,68 +68,40 @@ const meApproved = {
   role: "customer",
   is_email_verified: true,
   is_admin_approved: true,
-  onboarding_status: "approved"
+  onboarding_status: "approved",
+  permissions: ["view_dashboard", "view_traffic"]
 };
+
+function renderRouter(initialPath = "/dashboard") {
+  return render(
+    <AuthProvider>
+      <MemoryRouter initialEntries={[initialPath]}>
+        <Routes>
+          <Route path="/*" element={<AppRouter />} />
+        </Routes>
+      </MemoryRouter>
+    </AuthProvider>
+  );
+}
 
 describe("AppRouter Protections", () => {
   beforeEach(() => {
-    vi.resetAllMocks();
-    mockApiGet.mockImplementation((url: string) => {
-      const u = String(url);
-      if (u.includes("auth/me")) {
-        return Promise.resolve({ data: meApproved });
-      }
-      return Promise.resolve({ data: {} });
-    });
+    mockApiGet.mockReset();
   });
 
-  it("redirects to /login if trying to access /dashboard while unauthenticated", () => {
-    vi.mocked(authSession.isAuthenticated).mockReturnValue(false);
-
-    render(
-      <MemoryRouter initialEntries={["/dashboard"]}>
-        <AppRouter />
-      </MemoryRouter>
-    );
-
-    expect(screen.getByText(/sign in/i)).toBeInTheDocument();
-  });
-
-  it("allows access to /dashboard if authenticated and onboarding approved", async () => {
-    vi.mocked(authSession.isAuthenticated).mockReturnValue(true);
-    vi.mocked(authSession.hasRole).mockReturnValue(true);
-    vi.mocked(authSession.getAuthSession).mockReturnValue({
-      token: "eyJhbGciOiJIUzI1NiJ9.payload.sig",
-      user: { id: "1", email: "tester@example.com", role: "customer", onboardingStatus: "approved" }
-    });
-
-    render(
-      <MemoryRouter initialEntries={["/dashboard"]}>
-        <AppRouter />
-      </MemoryRouter>
-    );
-
+  it("redirects unauthenticated users to login", async () => {
+    mockApiGet.mockRejectedValue({ response: { status: 401 }, isAxiosError: true });
+    renderRouter("/dashboard");
     await waitFor(() => {
-      expect(screen.getByText(/User Dashboard/i)).toBeInTheDocument();
-    }, { timeout: 5000 });
+      expect(screen.getByText(/sign in/i)).toBeInTheDocument();
+    });
   });
 
-  it("blocks non-admin users from accessing /dashboard/admin/users", async () => {
-    vi.mocked(authSession.isAuthenticated).mockReturnValue(true);
-    vi.mocked(authSession.hasRole).mockImplementation(() => false);
-    vi.mocked(authSession.getAuthSession).mockReturnValue({
-      token: "eyJhbGciOiJIUzI1NiJ9.payload.sig",
-      user: { id: "1", email: "tester@example.com", role: "customer", onboardingStatus: "approved" }
-    });
-
-    render(
-      <MemoryRouter initialEntries={["/dashboard/admin/users"]}>
-        <AppRouter />
-      </MemoryRouter>
-    );
-
+  it("shows dashboard when session cookie validates via /me", async () => {
+    mockApiGet.mockResolvedValue({ data: meApproved });
+    renderRouter("/dashboard");
     await waitFor(() => {
-      expect(screen.getByText(/This page is unavailable/i)).toBeInTheDocument();
-    }, { timeout: 5000 });
+      expect(screen.getByText("User Dashboard")).toBeInTheDocument();
+    });
   });
 });

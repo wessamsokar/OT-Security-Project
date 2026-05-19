@@ -86,3 +86,25 @@ class InventoryEdgeResponse(BaseModel):
     device_a_id: int
     device_b_id: int
     packet_count: int
+
+
+class ProtocolDistributionRow(BaseModel):
+    protocol: str
+    packets: int
+    last_seen_at: datetime | None = None
+
+
+class ProtocolDistributionResponse(BaseModel):
+    window_hours: int
+    total_packets: int
+    protocols: list[ProtocolDistributionRow]
+
+
+class TelemetryHealthResponse(BaseModel):
+    window_minutes: int
+    packets_last_minute: int
+    packets_last_5min: int
+    packets_last_15min: int
+    avg_packets_per_minute_15m: float
+    last_traffic_at: datetime | None = None
+    dropped_packets: int | None = None

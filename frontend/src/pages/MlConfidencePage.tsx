@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchModelVersions, type ModelVersionResponse } from "../api/modelApi";
 import { connectAlertsStream } from "../api/streamApi";
+import { useTenant } from "../contexts/TenantContext";
 
 type FeatureWeight = {
   name: string;
@@ -58,9 +59,26 @@ export function MlConfidencePage() {
   const [liveConfidence, setLiveConfidence] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { activeTenantId, canSelectTenant, assignedCustomers, isLoadingAssignments } = useTenant();
+  const tenantId = canSelectTenant ? activeTenantId : undefined;
 
   useEffect(() => {
     let active = true;
+
+    if (canSelectTenant && isLoadingAssignments) {
+      return () => {
+        active = false;
+      };
+    }
+
+    if (canSelectTenant && assignedCustomers.length === 0) {
+      setError("No customer tenants assigned. Contact an administrator.");
+      setLoading(false);
+      return () => {
+        active = false;
+      };
+    }
 
     const load = async () => {
       try {
@@ -83,19 +101,34 @@ export function MlConfidencePage() {
     const stream = connectAlertsStream(
       (snapshot) => {
         if (!active) return;
+        if (errorTimerRef.current) {
+          clearTimeout(errorTimerRef.current);
+          errorTimerRef.current = null;
+        }
         setLiveConfidence(snapshot.ml_confidence);
+        setError("");
       },
       () => {
         if (!active) return;
-        setError("Live stream disconnected. Showing latest model confidence.");
-      }
+        if (errorTimerRef.current) return;
+        errorTimerRef.current = setTimeout(() => {
+          setError("Live stream disconnected. Showing latest model confidence.");
+          errorTimerRef.current = null;
+        }, 8000); // 8s grace period absorbs normal server-side reconnects
+      },
+      tenantId,
+      { lazy: true, visibilityAware: true }
     );
 
     return () => {
       active = false;
+      if (errorTimerRef.current) {
+        clearTimeout(errorTimerRef.current);
+        errorTimerRef.current = null;
+      }
       stream?.close();
     };
-  }, []);
+  }, [tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
 
   const activeVersion = useMemo(() => {
     return versions.find((version) => version.is_active) ?? versions[0] ?? null;

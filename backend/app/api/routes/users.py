@@ -6,7 +6,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import require_roles
+from app.api.dependencies import require_permission, get_current_user
 from app.core.config import get_settings
 from app.core.security import get_password_hash
 from app.db.session import get_db
@@ -15,17 +15,26 @@ from app.models.auth_token import AuthToken
 from app.models.device import Device
 from app.models.incident import Incident
 from app.models.traffic_record import TrafficRecord
-from app.models.user import OnboardingStatus, User, UserRole
+from app.models.user import OnboardingStatus, User, UserRole, UserCustomerAssignment
 from app.schemas.alerts import ActiveThreatResponse, AlertResponse
 from app.schemas.devices import DeviceResponse
 from app.schemas.incidents import IncidentResponse
 from app.schemas.traffic import TrafficRecordResponse
-from app.schemas.users import OnboardingRejectRequest, UserAdminResponse, UserCreate, UserUpdate
+from app.schemas.users import (
+    CustomerAssignmentResponse,
+    BulkAssignmentResponse,
+    OnboardingRejectRequest,
+    UserAdminResponse,
+    UserCreate,
+    UserCustomerAssignmentUpdate,
+    UserUpdate,
+)
 from app.services.email import (
     send_email_verified_by_admin_notice,
     send_ot_onboarding_approved_email,
     send_ot_onboarding_rejected_email,
 )
+from app.services.permissions import user_has_permission, user_is_admin
 
 router = APIRouter(prefix="/users", tags=["users"])
 settings = get_settings()
@@ -35,7 +44,7 @@ logger = logging.getLogger(__name__)
 @router.get("", response_model=list[UserAdminResponse])
 def list_users(
     db: Session = Depends(get_db),
-    _user: User = Depends(require_roles(UserRole.admin)),
+    _user: User = Depends(require_permission("view_users")),
     q: str | None = Query(default=None, min_length=1),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[UserAdminResponse]:
@@ -57,7 +66,7 @@ def list_users(
 def create_user(
     payload: UserCreate,
     db: Session = Depends(get_db),
-    _user: User = Depends(require_roles(UserRole.admin)),
+    _user: User = Depends(require_permission("manage_users")),
 ) -> UserAdminResponse:
     username = payload.username.strip()
     email = payload.email.strip().lower()
@@ -76,7 +85,8 @@ def create_user(
         email_verified_at=datetime.utcnow() if payload.is_email_verified else None,
         is_admin_approved=approved,
         admin_approved_at=datetime.utcnow() if approved else None,
-        onboarding_status=OnboardingStatus.approved if approved else OnboardingStatus.pending,
+        # Non-customer roles never need admin approval — auto-approve.
+        onboarding_status=OnboardingStatus.approved if (approved or payload.role != UserRole.customer) else OnboardingStatus.pending,
         rejected_at=None,
     )
     db.add(user)
@@ -93,7 +103,7 @@ def create_user(
 def get_user(
     user_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(require_roles(UserRole.admin)),
+    _user: User = Depends(require_permission("view_users")),
 ) -> UserAdminResponse:
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -112,7 +122,7 @@ def _get_user_or_404(db: Session, user_id: int) -> User:
 def list_user_devices(
     user_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(require_roles(UserRole.admin)),
+    _user: User = Depends(require_permission("view_users")),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[DeviceResponse]:
     _get_user_or_404(db, user_id)
@@ -129,7 +139,7 @@ def list_user_devices(
 def list_user_alerts(
     user_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(require_roles(UserRole.admin)),
+    _user: User = Depends(require_permission("view_users")),
     limit: int = Query(default=200, ge=1, le=500),
 ) -> list[AlertResponse]:
     _get_user_or_404(db, user_id)
@@ -147,7 +157,7 @@ def list_user_alerts(
 def list_user_threats(
     user_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(require_roles(UserRole.admin)),
+    _user: User = Depends(require_permission("view_users")),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[ActiveThreatResponse]:
     _get_user_or_404(db, user_id)
@@ -179,7 +189,7 @@ def list_user_threats(
 def list_user_incidents(
     user_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(require_roles(UserRole.admin)),
+    _user: User = Depends(require_permission("view_users")),
     limit: int = Query(default=200, ge=1, le=500),
 ) -> list[IncidentResponse]:
     _get_user_or_404(db, user_id)
@@ -198,7 +208,7 @@ def list_user_incidents(
 def list_user_traffic(
     user_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(require_roles(UserRole.admin)),
+    _user: User = Depends(require_permission("view_users")),
     limit: int = Query(default=200, ge=1, le=500),
 ) -> list[TrafficRecordResponse]:
     _get_user_or_404(db, user_id)
@@ -217,7 +227,7 @@ def update_user(
     payload: UserUpdate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_roles(UserRole.admin)),
+    current_admin: User = Depends(require_permission("manage_users")),
 ) -> UserAdminResponse:
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -314,7 +324,7 @@ def approve_onboarding_registration(
     user_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_roles(UserRole.admin)),
+    current_admin: User = Depends(require_permission("approve_users")),
 ) -> UserAdminResponse:
     """Mark self-registered user as approved; sends enterprise welcome email."""
     user = db.query(User).filter(User.id == user_id).first()
@@ -322,6 +332,11 @@ def approve_onboarding_registration(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if user.role == UserRole.admin:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Administrators use role management, not onboarding approval.")
+    if user.role != UserRole.customer:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{user.role.value} accounts do not require admin approval and cannot be approved via this endpoint.",
+        )
 
     user.onboarding_status = OnboardingStatus.approved
     user.is_admin_approved = True
@@ -350,7 +365,7 @@ def reject_onboarding_registration(
     payload: OnboardingRejectRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_roles(UserRole.admin)),
+    current_admin: User = Depends(require_permission("approve_users")),
 ) -> UserAdminResponse:
     """Reject access request; terminates login for this account until re-registration policy allows."""
     user = db.query(User).filter(User.id == user_id).first()
@@ -358,6 +373,11 @@ def reject_onboarding_registration(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if user.role == UserRole.admin:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot reject administrator accounts.")
+    if user.role != UserRole.customer:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{user.role.value} accounts do not require admin approval and cannot be rejected via this endpoint.",
+        )
 
     user.onboarding_status = OnboardingStatus.rejected
     user.is_admin_approved = False
@@ -385,7 +405,7 @@ def reject_onboarding_registration(
 def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_roles(UserRole.admin)),
+    current_admin: User = Depends(require_permission("manage_users")),
 ) -> None:
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -409,3 +429,79 @@ def delete_user(
             detail="Unable to delete this user because related data could not be removed.",
         )
     return None
+
+
+@router.get("/{user_id}/customers", response_model=CustomerAssignmentResponse)
+def get_user_customers(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CustomerAssignmentResponse:
+    if current_user.id != user_id and not user_has_permission(db, current_user, "manage_users") and not user_is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Not authorized to view these assignments")
+
+    user = _get_user_or_404(db, user_id)
+    if user.role not in (UserRole.analyst, UserRole.viewer):
+        raise HTTPException(status_code=400, detail="Only analysts and viewers can have assigned customers.")
+
+    assignments = db.query(UserCustomerAssignment).filter(UserCustomerAssignment.assigned_user_id == user_id).all()
+    customer_ids = [a.customer_user_id for a in assignments]
+    customers = db.query(User).filter(User.id.in_(customer_ids)).all()
+    return CustomerAssignmentResponse(assigned_customers=customers)
+
+
+@router.get("/assignments/bulk", response_model=BulkAssignmentResponse)
+def get_bulk_assignments(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_permission("manage_users")),
+) -> BulkAssignmentResponse:
+    """Returns a map of analyst/viewer user_id (as string) to their assigned customers."""
+    assignments = db.query(UserCustomerAssignment).all()
+    
+    # We need to map customer_id -> User
+    customer_ids = {a.customer_user_id for a in assignments}
+    if not customer_ids:
+        return BulkAssignmentResponse(assignments={})
+        
+    customers = db.query(User).filter(User.id.in_(customer_ids)).all()
+    customer_by_id = {c.id: c for c in customers}
+    
+    result = {}
+    for a in assignments:
+        key = str(a.assigned_user_id)
+        if key not in result:
+            result[key] = []
+        if a.customer_user_id in customer_by_id:
+            result[key].append(customer_by_id[a.customer_user_id])
+            
+    return BulkAssignmentResponse(assignments=result)
+
+
+@router.put("/{user_id}/customers", response_model=CustomerAssignmentResponse)
+def update_user_customers(
+    user_id: int,
+    payload: UserCustomerAssignmentUpdate,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_permission("manage_users")),
+) -> CustomerAssignmentResponse:
+    user = _get_user_or_404(db, user_id)
+    if user.role not in (UserRole.analyst, UserRole.viewer):
+        raise HTTPException(status_code=400, detail="Only analysts and viewers can have assigned customers.")
+
+    # Validate all requested customer IDs exist and are actually customers
+    requested_customers = db.query(User).filter(User.id.in_(payload.customer_ids)).all()
+    valid_customer_ids = [c.id for c in requested_customers if c.role == UserRole.customer]
+    
+    if len(valid_customer_ids) != len(payload.customer_ids):
+        raise HTTPException(status_code=400, detail="One or more provided IDs are invalid or not customer users.")
+
+    # Clear existing assignments
+    db.query(UserCustomerAssignment).filter(UserCustomerAssignment.assigned_user_id == user_id).delete(synchronize_session=False)
+
+    # Add new assignments
+    for cid in valid_customer_ids:
+        db.add(UserCustomerAssignment(assigned_user_id=user_id, customer_user_id=cid))
+        
+    db.commit()
+
+    return CustomerAssignmentResponse(assigned_customers=requested_customers)

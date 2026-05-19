@@ -50,78 +50,128 @@ def _escape(s: str) -> str:
     return html.escape(s, quote=True)
 
 
-def _html_email_shell(
-    *,
-    brand_title: str,
-    headline: str,
-    lead: str,
-    cta_label: str | None,
-    action_url: str | None,
-    footer_extra: str,
-    brand_tag_color: str | None = None,
-    cta_gradient: str | None = None,
-    footer_signature_color: str | None = None,
-    button_tip: str | None = None,
-) -> str:
-    """Single-column HTML suitable for mail clients (inline styles, table layout)."""
-    brand_safe = _escape(brand_title)
-    headline_safe = _escape(headline)
-    lead_safe = _escape(lead).replace("\n", "<br />")
-    tag_color = brand_tag_color or _THEME_BRAND
-    btn_grad = cta_gradient or f"linear-gradient(135deg,{_THEME_BRAND} 0%,#4a7fd9 100%)"
-    sig_color = footer_signature_color or _THEME_ACCENT
-    tip_default = "Tip: use the button above — the secure link is not shown here as plain text."
-    tip_html = _escape(button_tip if button_tip is not None else tip_default)
+def _format_text(text: str) -> str:
+    return _escape(text).replace("\n", "<br />")
 
-    if action_url and cta_label:
-        cta_safe = _escape(cta_label)
-        url_safe = html.escape(action_url, quote=True)
-        button_block = f"""
-        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0 0 0;">
-          <tr>
-            <td align="center" style="border-radius:12px;background:{btn_grad};">
-              <a href="{url_safe}" target="_blank" rel="noopener noreferrer"
-                 style="display:inline-block;padding:14px 28px;font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:600;color:#060c1c;text-decoration:none;border-radius:12px;">
-                {cta_safe}
-              </a>
-            </td>
-          </tr>
-        </table>
-        <p style="margin:18px 0 0 0;font-size:12px;line-height:1.5;color:{_THEME_MUTED};font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
-          {tip_html}
-        </p>
-        """
-    else:
-        button_block = f"""
-        <div style="margin:24px 0;padding:16px 18px;border-radius:12px;border:1px solid {_THEME_BORDER};background:rgba(13,23,52,0.9);">
-          <p style="margin:0;font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:1.55;color:{_THEME_MUTED};">
-            {_escape(footer_extra)}
-          </p>
-        </div>
-        """
 
+def _render_preheader(text: str) -> str:
+    return (
+        "<div style=\"display:none;font-size:1px;color:#060c1c;line-height:1px;"
+        "max-height:0;max-width:0;opacity:0;overflow:hidden;\">"
+        f"{_escape(text)}"
+        "</div>"
+    )
+
+
+def _render_header(brand_title: str, headline: str, lead: str, *, tag_color: str) -> str:
+    return (
+        "<p style=\"margin:0 0 6px 0;font-size:11px;letter-spacing:0.14em;"
+        f"text-transform:uppercase;color:{tag_color};\">{_escape(brand_title)}</p>"
+        f"<h1 style=\"margin:0 0 14px 0;font-size:22px;font-weight:600;"
+        f"color:{_THEME_TEXT};line-height:1.25;\">{_escape(headline)}</h1>"
+        f"<p style=\"margin:0;font-size:15px;line-height:1.6;"
+        f"color:{_THEME_MUTED};\">{_format_text(lead)}</p>"
+    )
+
+
+def _render_divider() -> str:
+    return f"<hr style=\"border:none;border-top:1px solid {_THEME_BORDER};margin:20px 0;\" />"
+
+
+def _render_greeting(name: str) -> str:
+    safe = _escape(name)
+    return (
+        f"<p style=\"margin:18px 0 10px 0;font-size:14px;line-height:1.6;"
+        f"color:{_THEME_TEXT};\">Hello {safe},</p>"
+    )
+
+
+def _render_button(label: str, url: str, *, gradient: str) -> str:
+    label_safe = _escape(label)
+    url_safe = html.escape(url, quote=True)
+    return (
+        "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" "
+        "style=\"margin:26px 0 0 0;\">"
+        "<tr>"
+        f"<td align=\"center\" style=\"border-radius:12px;background-color:{_THEME_BRAND};"
+        f"background-image:{gradient};\">"
+        f"<a href=\"{url_safe}\" target=\"_blank\" rel=\"noopener noreferrer\" "
+        "style=\"display:inline-block;padding:14px 28px;font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;"
+        "font-size:15px;font-weight:600;color:#060c1c;text-decoration:none;border-radius:12px;\">"
+        f"{label_safe}</a>"
+        "</td></tr></table>"
+    )
+
+
+def _render_fallback_link(url: str, label: str = "Secure fallback link") -> str:
+    url_safe = html.escape(url, quote=True)
+    return (
+        "<p style=\"margin:14px 0 0 0;font-size:12px;line-height:1.55;"
+        f"color:{_THEME_MUTED};\">"
+        f"{_escape(label)}: <a href=\"{url_safe}\" style=\"color:{_THEME_BRAND};\">{url_safe}</a>"
+        "</p>"
+    )
+
+
+def _render_security_notice(text: str) -> str:
+    return (
+        f"<div style=\"margin:18px 0 0 0;padding:14px 16px;border-radius:12px;"
+        f"border:1px solid {_THEME_BORDER};background:rgba(13,23,52,0.9);\">"
+        f"<p style=\"margin:0;font-size:13px;line-height:1.55;color:{_THEME_MUTED};\">"
+        f"{_format_text(text)}</p></div>"
+    )
+
+
+def _render_warning_banner(text: str) -> str:
+    return (
+        "<div style=\"margin:18px 0 0 0;padding:14px 16px;border-radius:12px;"
+        "border:1px solid rgba(248,113,113,0.5);background:rgba(88,22,22,0.35);\">"
+        "<p style=\"margin:0;font-size:13px;line-height:1.55;color:#fda4af;\">"
+        f"{_format_text(text)}</p></div>"
+    )
+
+
+def _render_expiration_notice(minutes: int) -> str:
+    return _render_security_notice(
+        f"Security note: this link expires in about {minutes} minutes."
+    )
+
+
+def _render_support_section(text: str) -> str:
+    return (
+        f"<p style=\"margin:0;font-size:12px;line-height:1.5;color:{_THEME_MUTED};\">"
+        f"{_format_text(text)}</p>"
+    )
+
+
+def _render_footer(signature: str, extra: str | None) -> str:
+    extra_html = _render_support_section(extra) if extra else ""
+    return (
+        f"{extra_html}"
+        f"<p style=\"margin:12px 0 0 0;font-size:11px;color:{_THEME_PURPLE};"
+        f"font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;\">{_escape(signature)}</p>"
+    )
+
+
+def _render_email_layout(body_html: str, footer_html: str, *, preheader: str | None = None) -> str:
+    preheader_html = _render_preheader(preheader) if preheader else ""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
 <body style="margin:0;padding:0;background:{_THEME_BG};">
+  {preheader_html}
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{_THEME_BG};padding:32px 16px;">
     <tr>
       <td align="center">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:{_THEME_PANEL};border-radius:20px;border:1px solid {_THEME_BORDER};overflow:hidden;">
           <tr>
             <td style="padding:28px 28px 8px 28px;font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
-              <p style="margin:0 0 6px 0;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:{tag_color};">{brand_safe}</p>
-              <h1 style="margin:0 0 14px 0;font-size:22px;font-weight:600;color:{_THEME_TEXT};line-height:1.25;">{headline_safe}</h1>
-              <p style="margin:0;font-size:15px;line-height:1.6;color:{_THEME_MUTED};">{lead_safe}</p>
-              {button_block}
+              {body_html}
             </td>
           </tr>
           <tr>
-            <td style="padding:16px 28px 28px 28px;border-top:1px solid {_THEME_BORDER};">
-              <p style="margin:0;font-size:12px;line-height:1.5;color:{_THEME_MUTED};font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
-                {_escape("Industrial OT security · If you did not request this message, you can safely ignore it.")}
-              </p>
-              <p style="margin:14px 0 0 0;font-size:11px;color:{sig_color};font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;">{_escape("— OT Sentinel")}</p>
+            <td style="padding:16px 28px 28px 28px;border-top:1px solid {_THEME_BORDER};font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
+              {footer_html}
             </td>
           </tr>
         </table>
@@ -131,6 +181,47 @@ def _html_email_shell(
 </body>
 </html>
 """
+
+
+def _build_branded_email(
+    *,
+    brand_title: str,
+    headline: str,
+    lead: str,
+    body_sections: list[str],
+    footer_text: str,
+    preheader: str | None = None,
+    cta_label: str | None = None,
+    action_url: str | None = None,
+    cta_tip: str | None = None,
+) -> str:
+    header_html = _render_header(
+        brand_title,
+        headline,
+        lead,
+        tag_color=_THEME_PURPLE,
+    )
+
+    cta_html = ""
+    if cta_label and action_url:
+        cta_html = (
+            _render_button(
+                cta_label,
+                action_url,
+                gradient=f"linear-gradient(135deg,{_THEME_BRAND} 0%,{_THEME_PURPLE_DEEP} 100%)",
+            )
+            + (
+                f"<p style=\"margin:12px 0 0 0;font-size:12px;line-height:1.5;color:{_THEME_MUTED};\">"
+                f"{_escape(cta_tip or 'Open the secure link above in your browser.')}"
+                "</p>"
+            )
+            + _render_fallback_link(action_url)
+        )
+
+    body_html = header_html + "".join(body_sections) + cta_html
+
+    footer_html = _render_footer("— OT Sentinel", footer_text)
+    return _render_email_layout(body_html, footer_html, preheader=preheader)
 
 
 def _format_delivery_error(exc: BaseException) -> str:
@@ -252,17 +343,24 @@ def send_verification_email(to_email: str, token: str) -> tuple[bool, str | None
         plain = (
             f"{brand}\n\n"
             "Confirm your email address using the secure link below.\n"
-            "We never display security tokens in this message — only the button and link contain your one-time access.\n\n"
+            "We never display security tokens in this message.\n\n"
             f"{link}\n\n"
             "If you did not create an account, you can ignore this email."
         )
-        html_body = _html_email_shell(
+        html_body = _build_branded_email(
             brand_title=brand,
             headline="Confirm your email",
-            lead="Welcome aboard. Tap the button below to verify your address and activate your account.",
+            lead="Welcome aboard. Verify your address to activate your OT Sentinel account.",
+            body_sections=[
+                _render_security_notice(
+                    "We never expose security tokens in email content. Use the secure button to proceed."
+                ),
+            ],
+            footer_text="Industrial OT security · If you did not request this message, you can safely ignore it.",
+            preheader="Verify your email to activate your OT Sentinel account.",
             cta_label="Verify email",
             action_url=link,
-            footer_extra="",
+            cta_tip="Use the button above to confirm your email.",
         )
     else:
         missing = (
@@ -270,13 +368,13 @@ def send_verification_email(to_email: str, token: str) -> tuple[bool, str | None
             "Ask your administrator to set it so verification links can be sent."
         )
         plain = f"{brand}\n\n{missing}\n\nIf you did not create an account, ignore this email."
-        html_body = _html_email_shell(
+        html_body = _build_branded_email(
             brand_title=brand,
             headline="Confirm your email",
             lead="We could not build a verification link because the application URL is not configured.",
-            cta_label=None,
-            action_url=None,
-            footer_extra=missing,
+            body_sections=[_render_warning_banner(missing)],
+            footer_text="Industrial OT security · If you did not request this message, you can safely ignore it.",
+            preheader="Verification link unavailable.",
         )
 
     return send_email(to_email, subject, plain, html_body)
@@ -299,20 +397,19 @@ def send_email_verified_by_admin_notice(to_email: str, display_name: str) -> tup
             f"{login_url}\n\n"
             "— OT Sentinel"
         )
-        html_body = _html_email_shell(
+        html_body = _build_branded_email(
             brand_title=brand,
             headline="Your email is verified",
-            lead=(
-                f"Hi {name}, an administrator has confirmed your email address. "
-                "Your account email is now verified on the platform."
-            ),
+            lead="An administrator has confirmed your email address on the platform.",
+            body_sections=[
+                _render_greeting(name),
+                _render_security_notice("Use only approved corporate devices when accessing OT monitoring data."),
+            ],
+            footer_text="Industrial OT security · If you did not request this change, contact your SOC lead.",
+            preheader="Your email has been verified by an administrator.",
             cta_label="Sign in",
             action_url=login_url,
-            footer_extra="",
-            brand_tag_color=_THEME_PURPLE,
-            cta_gradient=f"linear-gradient(135deg,{_THEME_BRAND} 0%,{_THEME_PURPLE_DEEP} 100%)",
-            footer_signature_color=_THEME_PURPLE,
-            button_tip="Use the button above to open the sign-in page.",
+            cta_tip="Use the button above to open the sign-in page.",
         )
     else:
         extra = (
@@ -320,16 +417,13 @@ def send_email_verified_by_admin_notice(to_email: str, display_name: str) -> tup
             "Ask your administrator to set FRONTEND_BASE_URL on the server for direct links in future emails."
         )
         plain = f"{brand}\n\nHello {name},\n\n{extra}\n\n— OT Sentinel"
-        html_body = _html_email_shell(
+        html_body = _build_branded_email(
             brand_title=brand,
             headline="Your email is verified",
-            lead=f"Hi {name}, an administrator has confirmed your email address. {extra}",
-            cta_label=None,
-            action_url=None,
-            footer_extra=extra,
-            brand_tag_color=_THEME_PURPLE,
-            cta_gradient=None,
-            footer_signature_color=_THEME_PURPLE,
+            lead="An administrator has confirmed your email address on the platform.",
+            body_sections=[_render_greeting(name), _render_warning_banner(extra)],
+            footer_text="Industrial OT security · If you did not request this change, contact your SOC lead.",
+            preheader="Email verified, sign-in link unavailable.",
         )
 
     return send_email(to_email, subject, plain, html_body)
@@ -351,20 +445,19 @@ def send_account_approved_by_admin_notice(to_email: str, display_name: str) -> t
             f"{login_url}\n\n"
             "— OT Sentinel"
         )
-        html_body = _html_email_shell(
+        html_body = _build_branded_email(
             brand_title=brand,
             headline="Your account is approved",
-            lead=(
-                f"Hi {name}, your account has been approved by an administrator. "
-                "You may sign in with your email and password."
-            ),
+            lead="Your OT Sentinel account has been approved by an administrator.",
+            body_sections=[
+                _render_greeting(name),
+                _render_security_notice("Use your work email and MFA if configured by your tenancy."),
+            ],
+            footer_text="Industrial OT security · If you did not request this change, contact your SOC lead.",
+            preheader="Account approved. Sign in when ready.",
             cta_label="Sign in",
             action_url=login_url,
-            footer_extra="",
-            brand_tag_color=_THEME_PURPLE,
-            cta_gradient=f"linear-gradient(135deg,{_THEME_BRAND} 0%,{_THEME_PURPLE_DEEP} 100%)",
-            footer_signature_color=_THEME_PURPLE,
-            button_tip="Use the button above to open the sign-in page.",
+            cta_tip="Use the button above to open the sign-in page.",
         )
     else:
         extra = (
@@ -372,16 +465,13 @@ def send_account_approved_by_admin_notice(to_email: str, display_name: str) -> t
             "Configure FRONTEND_BASE_URL for direct sign-in links in future emails."
         )
         plain = f"{brand}\n\nHello {name},\n\n{extra}\n\n— OT Sentinel"
-        html_body = _html_email_shell(
+        html_body = _build_branded_email(
             brand_title=brand,
             headline="Your account is approved",
-            lead=f"Hi {name}, {extra}",
-            cta_label=None,
-            action_url=None,
-            footer_extra=extra,
-            brand_tag_color=_THEME_PURPLE,
-            cta_gradient=None,
-            footer_signature_color=_THEME_PURPLE,
+            lead="Your OT Sentinel account has been approved by an administrator.",
+            body_sections=[_render_greeting(name), _render_warning_banner(extra)],
+            footer_text="Industrial OT security · If you did not request this change, contact your SOC lead.",
+            preheader="Account approved, sign-in link unavailable.",
         )
 
     return send_email(to_email, subject, plain, html_body)
@@ -414,17 +504,21 @@ def send_ot_onboarding_approved_email(
             "For security, use only approved corporate devices and networks when accessing ICS monitoring data.\n\n"
             "— OT Sentinel"
         )
-        html_body = _html_email_shell(
+        html_body = _build_branded_email(
             brand_title=brand,
             headline="Your access request was approved",
             lead=lead,
+            body_sections=[
+                _render_greeting(who),
+                _render_security_notice(
+                    "Use your work email and approved corporate devices. Contact your SOC lead if MFA or SSO applies."
+                ),
+            ],
+            footer_text="Industrial OT security onboarding · If you did not request this access, contact your SOC lead.",
+            preheader="Access approved for OT Sentinel.",
             cta_label="Access OT Sentinel",
             action_url=login_url,
-            footer_extra="Use your work email and password. Contact your SOC lead if MFA or SSO applies in your tenancy.",
-            brand_tag_color=_THEME_PURPLE,
-            cta_gradient=f"linear-gradient(135deg,{_THEME_BRAND} 0%,{_THEME_PURPLE_DEEP} 100%)",
-            footer_signature_color=_THEME_PURPLE,
-            button_tip="Secure sign-in opens in your browser.",
+            cta_tip="Secure sign-in opens in your browser.",
         )
     else:
         extra = (
@@ -432,15 +526,13 @@ def send_ot_onboarding_approved_email(
             "Set FRONTEND_BASE_URL on the server to include direct links in outbound mail."
         )
         plain = f"{brand}\n\nHello {who},\n\n{lead}\n\n{extra}\n\n— OT Sentinel"
-        html_body = _html_email_shell(
+        html_body = _build_branded_email(
             brand_title=brand,
             headline="Your access request was approved",
-            lead=f"{lead} {extra}",
-            cta_label=None,
-            action_url=None,
-            footer_extra=extra,
-            brand_tag_color=_THEME_PURPLE,
-            footer_signature_color=_THEME_PURPLE,
+            lead=lead,
+            body_sections=[_render_greeting(who), _render_warning_banner(extra)],
+            footer_text="Industrial OT security onboarding · If you did not request this access, contact your SOC lead.",
+            preheader="Access approved, sign-in link unavailable.",
         )
 
     return send_email(to_email, subject, plain, html_body)
@@ -478,16 +570,15 @@ def send_ot_onboarding_rejected_email(
 
     plain = f"{brand}\n\n{lead}\n\n— OT Sentinel Team"
 
-    html_body = _html_email_shell(
+    html_body = _build_branded_email(
         brand_title=brand,
         headline="Registration not approved",
-        lead=lead.replace("\n\n", "\n"),
-        cta_label=None,
-        action_url=None,
-        footer_extra="Industrial OT security onboarding · This mailbox may not receive replies.",
-        brand_tag_color="#f87171",
-        cta_gradient=None,
-        footer_signature_color=_THEME_MUTED,
+        lead="Your registration request could not be approved at this time.",
+        body_sections=[
+            _render_warning_banner(lead.replace("\n\n", "\n")),
+        ],
+        footer_text="Industrial OT security onboarding · This mailbox may not receive replies.",
+        preheader="Registration update for OT Sentinel.",
     )
 
     return send_email(to_email, subject, plain, html_body)
@@ -509,13 +600,19 @@ def send_password_reset_email(to_email: str, token: str) -> tuple[bool, str | No
             f"This link expires in about {expire_min} minutes.\n"
             "If you did not request a reset, you can ignore this email."
         )
-        html_body = _html_email_shell(
+        html_body = _build_branded_email(
             brand_title=brand,
             headline="Reset your password",
-            lead=f"We received a request to reset your password. The secure link below expires in about {expire_min} minutes.",
+            lead="We received a request to reset your password for your OT Sentinel account.",
+            body_sections=[
+                _render_security_notice("We never expose security tokens in email content."),
+                _render_expiration_notice(expire_min),
+            ],
+            footer_text="Industrial OT security · If you did not request this message, you can safely ignore it.",
+            preheader="Reset your password securely.",
             cta_label="Choose a new password",
             action_url=link,
-            footer_extra="",
+            cta_tip="This link is single-use and expires shortly.",
         )
     else:
         missing = (
@@ -523,13 +620,13 @@ def send_password_reset_email(to_email: str, token: str) -> tuple[bool, str | No
             "Contact your administrator — your account remains unchanged until you complete a reset from the app."
         )
         plain = f"{brand}\n\n{missing}\n\nIf you did not request a reset, ignore this email."
-        html_body = _html_email_shell(
+        html_body = _build_branded_email(
             brand_title=brand,
             headline="Reset your password",
             lead="We could not include a reset link because the application URL is not configured on the server.",
-            cta_label=None,
-            action_url=None,
-            footer_extra=missing,
+            body_sections=[_render_warning_banner(missing)],
+            footer_text="Industrial OT security · If you did not request this message, you can safely ignore it.",
+            preheader="Reset link unavailable.",
         )
 
     return send_email(to_email, subject, plain, html_body)

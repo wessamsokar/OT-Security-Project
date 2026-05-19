@@ -1,33 +1,50 @@
 import logging
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_authenticated_user
 from app.core.config import get_settings
+from app.core.cookies import clear_auth_cookie, clear_csrf_cookie, set_auth_cookie, set_csrf_cookie
+from app.core.csrf import generate_csrf_token
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.db.session import get_db
 from app.models.auth_token import AuthTokenType
 from app.models.user import OnboardingStatus, User, UserRole
 from app.schemas.auth import (
+    CsrfResponse,
     ForgotPasswordRequest,
     LoginRequest,
     MessageResponse,
     RegisterRequest,
     ResetPasswordRequest,
-    TokenResponse,
     UserResponse,
     VerifyEmailRequest,
 )
+from app.services.audit import record_audit
 from app.services.auth_tokens import consume_user_token, create_user_token, invalidate_user_tokens
 from app.services.email import send_password_reset_email, send_verification_email
+from app.services.permissions import resolve_user_permissions
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
+
+def _rotate_csrf(response: Response) -> str:
+    token = generate_csrf_token()
+    set_csrf_cookie(response, token)
+    return token
+
+
+@router.get("/csrf", response_model=CsrfResponse)
+def issue_csrf_token(response: Response) -> CsrfResponse:
+    """Issue or refresh CSRF cookie (call before any unsafe request from the SPA)."""
+    token = _rotate_csrf(response)
+    return CsrfResponse(csrf_token=token)
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -111,8 +128,13 @@ def register(
     return user
 
 
-@router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
+@router.post("/login", response_model=MessageResponse)
+def login(
+    payload: LoginRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> MessageResponse:
     identifier = payload.username.strip()
     user: User | None = None
     if "@" in identifier:
@@ -128,7 +150,25 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
             )
 
     if not user or not verify_password(payload.password, user.hashed_password):
+        record_audit(
+            db,
+            action="auth.login.failed",
+            category="auth",
+            request=request,
+            success=False,
+            detail=identifier[:120],
+        )
+        db.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is inactive")
+
+    # Only customer accounts require admin approval before login.
+    if user.role == UserRole.customer and user.onboarding_status == OnboardingStatus.pending:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="pending_approval",
+        )
 
     if user.onboarding_status == OnboardingStatus.rejected:
         raise HTTPException(
@@ -147,12 +187,64 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
         expires_delta=timedelta(minutes=settings.jwt_access_token_expire_minutes),
         extra_claims={"onboarding_status": user.onboarding_status.value},
     )
-    return TokenResponse(access_token=token)
+    set_auth_cookie(response, token)
+    _rotate_csrf(response)
+    record_audit(
+        db,
+        action="auth.login.success",
+        category="auth",
+        actor=user,
+        request=request,
+        resource_type="user",
+        resource_id=user.id,
+    )
+    db.commit()
+    return MessageResponse(message="Logged in")
 
 
 @router.get("/me", response_model=UserResponse)
-def me(current_user: User = Depends(get_authenticated_user)) -> UserResponse:
-    return current_user
+def me(
+    current_user: User = Depends(get_authenticated_user),
+    db: Session = Depends(get_db),
+) -> UserResponse:
+    perms = sorted(resolve_user_permissions(db, current_user))
+    return UserResponse(
+        id=current_user.id,
+        username=current_user.username,
+        email=current_user.email,
+        role=current_user.role,
+        is_email_verified=current_user.is_email_verified,
+        is_admin_approved=current_user.is_admin_approved,
+        onboarding_status=current_user.onboarding_status.value
+        if hasattr(current_user.onboarding_status, "value")
+        else str(current_user.onboarding_status),
+        permissions=perms,
+    )
+
+
+@router.post("/logout", response_model=MessageResponse)
+def logout(request: Request, response: Response, db: Session = Depends(get_db)) -> MessageResponse:
+    cookie_token = request.cookies.get(settings.auth_cookie_name)
+    if cookie_token:
+        from app.api.dependencies import _load_user_from_token
+
+        try:
+            user = _load_user_from_token(db, cookie_token)
+            record_audit(
+                db,
+                action="auth.logout",
+                category="auth",
+                actor=user,
+                request=request,
+                resource_type="user",
+                resource_id=user.id,
+            )
+            db.commit()
+        except HTTPException:
+            pass
+    clear_auth_cookie(response)
+    clear_csrf_cookie(response)
+    return MessageResponse(message="Logged out")
 
 
 @router.post("/forgot-password", response_model=MessageResponse)

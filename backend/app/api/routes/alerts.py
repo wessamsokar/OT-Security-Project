@@ -1,14 +1,14 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import require_roles
+from app.api.dependencies import require_permission
 from app.db.session import get_db
 from app.models.alert import Alert, AlertSeverity
 from app.models.incident import Incident, IncidentStatus
 from app.models.traffic_record import TrafficRecord
-from app.models.user import User, UserRole
+from app.models.user import User
 from app.schemas.alerts import (
     ActiveThreatResponse,
     AlertResponse,
@@ -17,45 +17,48 @@ from app.schemas.alerts import (
     MttrSummaryResponse,
 )
 from app.services.dashboard_summary import build_dashboard_summary
+from app.services.tenant import get_accessible_tenant_ids
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
 
-def _is_admin(user: User) -> bool:
-    return bool(user.role and user.role.value == UserRole.admin.value)
-
-
 @router.get("", response_model=list[AlertResponse])
 def list_alerts(
+
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.admin, UserRole.customer)),
+    current_user: User = Depends(require_permission("view_alerts")),
+    tenant_id: int | None = Query(default=None),
 ) -> list[AlertResponse]:
     query = db.query(Alert).join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
-    if not _is_admin(current_user):
-        query = query.filter(TrafficRecord.user_id == current_user.id)
+    tenant_ids = get_accessible_tenant_ids(db, current_user, tenant_id)
+    if tenant_ids is not None:
+        query = query.filter(TrafficRecord.user_id.in_(tenant_ids))
     return query.order_by(Alert.created_at.desc()).limit(200).all()
 
 
 @router.get("/dashboard", response_model=DashboardSummary)
 def dashboard(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.admin, UserRole.customer)),
+    current_user: User = Depends(require_permission("view_dashboard")),
+    tenant_id: int | None = Query(default=None),
 ) -> DashboardSummary:
-    return build_dashboard_summary(db, current_user)
+    return build_dashboard_summary(db, current_user, requested_tenant_id=tenant_id)
 
 
 @router.get("/active-threats", response_model=list[ActiveThreatResponse])
 def active_threats(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.admin, UserRole.customer)),
+    current_user: User = Depends(require_permission("view_alerts")),
+    tenant_id: int | None = Query(default=None),
 ) -> list[ActiveThreatResponse]:
     rows_query = (
         db.query(Alert, TrafficRecord)
         .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
         .filter(Alert.severity.in_([AlertSeverity.critical, AlertSeverity.high]))
     )
-    if not _is_admin(current_user):
-        rows_query = rows_query.filter(TrafficRecord.user_id == current_user.id)
+    tenant_ids = get_accessible_tenant_ids(db, current_user, tenant_id)
+    if tenant_ids is not None:
+        rows_query = rows_query.filter(TrafficRecord.user_id.in_(tenant_ids))
     rows = rows_query.order_by(Alert.created_at.desc()).limit(100).all()
 
     result: list[ActiveThreatResponse] = []
@@ -75,15 +78,17 @@ def active_threats(
 @router.get("/mttr", response_model=MttrSummaryResponse)
 def mttr_summary(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.admin, UserRole.customer)),
+    current_user: User = Depends(require_permission("view_alerts")),
+    tenant_id: int | None = Query(default=None),
 ) -> MttrSummaryResponse:
     incidents_query = (
         db.query(Incident)
         .join(Alert, Alert.id == Incident.alert_id)
         .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
     )
-    if not _is_admin(current_user):
-        incidents_query = incidents_query.filter(TrafficRecord.user_id == current_user.id)
+    tenant_ids = get_accessible_tenant_ids(db, current_user, tenant_id)
+    if tenant_ids is not None:
+        incidents_query = incidents_query.filter(TrafficRecord.user_id.in_(tenant_ids))
     incidents = incidents_query.order_by(Incident.created_at.desc()).limit(50).all()
     now = datetime.now(timezone.utc)
 

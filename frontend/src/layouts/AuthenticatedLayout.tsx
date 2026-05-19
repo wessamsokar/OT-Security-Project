@@ -1,30 +1,45 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 
 import { Logo } from "../components/layout/Logo";
 import { Navbar } from "../components/layout/Navbar";
+import { TenantSelector } from "../components/layout/TenantSelector";
 import { AccessRejectedPage } from "../pages/AccessRejectedPage";
 import { useOnboardingAccess } from "../contexts/OnboardingAccessContext";
-import { getUserRole, hasRole } from "../lib/authSession";
-import { navItemVisibleWhenPending, SIDEBAR_SECTIONS } from "../lib/navigation";
+import { useAuth } from "../contexts/AuthContext";
+import { navItemVisibleForRole, navItemVisibleWhenPending, SIDEBAR_SECTIONS } from "../lib/navigation";
 
 export function AuthenticatedLayout() {
-	const { status, isLoading } = useOnboardingAccess();
+	const { status } = useOnboardingAccess();
+	const { user, hasPermission, retryBootstrap, bootstrapError, isRefreshing, isDegraded } = useAuth();
+	const renderCountRef = useRef(0);
 	const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => {
 		if (typeof window === "undefined") return false;
 		return localStorage.getItem("ics_sidebar_open") === "true";
 	});
+	const [showSlowAuth, setShowSlowAuth] = useState(false);
 	const toggleSidebar = () => setIsSidebarOpen((prev) => !prev);
-	const role = getUserRole();
+	const role = user?.role;
 	const pendingShell = status === "pending";
 	const sections = SIDEBAR_SECTIONS.map((section) => ({
 		...section,
 		items: section.items
-			.filter((item) => !item.roles || hasRole(item.roles))
+			.filter((item) => navItemVisibleForRole(item, user?.role))
+			.filter((item) => !item.permissions || hasPermission(item.permissions))
 			.filter((item) => navItemVisibleWhenPending(item, pendingShell))
 	})).filter((section) => section.items.length > 0);
+
+	renderCountRef.current += 1;
+	console.debug(`[layout] AuthenticatedLayout render ${renderCountRef.current}`);
+
+	useEffect(() => {
+		console.info("[layout] AuthenticatedLayout mounted");
+		return () => {
+			console.info("[layout] AuthenticatedLayout unmounted");
+		};
+	}, []);
 
 	useEffect(() => {
 		if (typeof window !== "undefined") {
@@ -32,21 +47,19 @@ export function AuthenticatedLayout() {
 		}
 	}, [isSidebarOpen]);
 
+	useEffect(() => {
+		if (!isRefreshing) {
+			setShowSlowAuth(false);
+			return;
+		}
+		const timer = window.setTimeout(() => {
+			setShowSlowAuth(true);
+		}, 8000);
+		return () => window.clearTimeout(timer);
+	}, [isRefreshing]);
+
 	if (status === "rejected") {
 		return <AccessRejectedPage />;
-	}
-
-	if (isLoading) {
-		return (
-			<div className="min-h-screen bg-transparent text-text">
-				<Navbar onNavItemClick={() => setIsSidebarOpen(true)} onSidebarToggle={toggleSidebar} isSidebarOpen={isSidebarOpen} />
-				<div className="mx-auto flex max-w-7xl px-4 pb-8 pt-28 md:px-8">
-					<div className="flex min-h-[50vh] flex-1 items-center justify-center rounded-3xl border border-white/10 bg-panel/25 px-6 text-sm text-muted">
-						Verifying your account status…
-					</div>
-				</div>
-			</div>
-		);
 	}
 
 	return (
@@ -56,6 +69,31 @@ export function AuthenticatedLayout() {
 				onSidebarToggle={toggleSidebar}
 				isSidebarOpen={isSidebarOpen}
 			/>
+
+			{isRefreshing || isDegraded ? (
+				<div className="fixed left-1/2 top-20 z-[70] w-[min(92vw,36rem)] -translate-x-1/2 rounded-2xl border border-white/10 bg-panel/80 px-4 py-3 text-xs text-muted shadow-panel backdrop-blur">
+					<div className="flex items-center justify-between gap-3">
+						<div className="flex items-center gap-2">
+							<div className="h-2 w-2 animate-pulse rounded-full bg-brand" />
+							<span>{isDegraded ? "Session degraded — retrying verification…" : "Verifying your account status in the background…"}</span>
+						</div>
+						<span className="text-[11px] text-muted/70">You can keep working</span>
+					</div>
+					{showSlowAuth ? (
+						<div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted/80">
+							<span>Still verifying. If this keeps running, try a refresh.</span>
+							<button
+								type="button"
+								className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white transition hover:bg-white/15"
+								onClick={retryBootstrap}
+							>
+								Retry verification
+							</button>
+							{bootstrapError ? <span className="text-danger">{bootstrapError}</span> : null}
+						</div>
+					) : null}
+				</div>
+			) : null}
 
 			<div className="mx-auto flex max-w-7xl px-4 pb-8 pt-24 md:px-8">
 				<AnimatePresence initial={false}>
@@ -95,6 +133,8 @@ export function AuthenticatedLayout() {
 									<X size={14} />
 								</motion.button>
 							</div>
+
+							<TenantSelector />
 
 							<div className="mt-4 space-y-4">
 								{sections.map((section) => (

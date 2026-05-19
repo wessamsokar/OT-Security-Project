@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { OtTrafficSourceModal } from "../components/devices/OtTrafficSourceModal";
+import type { RelationshipPanelRef } from "../components/devices/RelationshipPanel";
 import {
   buildMetadataPayload,
   defaultOtTrafficSourceForm,
@@ -12,6 +13,8 @@ import {
 } from "../components/devices/otAssetMetadata";
 import { createDevice, deleteDevice, fetchDevices, updateDevice, type DeviceResponse } from "../api/devicesApi";
 import { Button } from "../components/ui/Button";
+import { useAuth } from "../contexts/AuthContext";
+import { useTenant } from "../contexts/TenantContext";
 
 export function DevicesPage() {
   const [devices, setDevices] = useState<DeviceResponse[]>([]);
@@ -22,13 +25,47 @@ export function DevicesPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [formError, setFormError] = useState("");
+  const { hasPermission } = useAuth();
+  const { activeTenantId, canSelectTenant, assignedCustomers, isLoadingAssignments } = useTenant();
+  const tenantId = canSelectTenant ? activeTenantId : undefined;
+  const panelRef = useRef<RelationshipPanelRef | null>(null);
+  const canCreateDevices = hasPermission("create_devices");
+  const canEditDevices = hasPermission("edit_devices");
+  const canDeleteDevices = hasPermission("delete_devices");
+  const canManageDevices = canCreateDevices || canEditDevices || canDeleteDevices;
+
+  /**
+   * Best-effort topology refresh after any mutation.
+   * The topology graph (OtInventoryPage) runs its own SSE loop and will pick up
+   * changes within the SSE interval. This call pre-empts that wait so the graph
+   * updates immediately if the user navigates to the Topology view right away.
+   * It is intentionally fire-and-forget — failures are silent.
+   */
+  const refreshTopologyIfMounted = useRef(async () => {
+    // no-op placeholder; actual refresh done by SSE on OtInventoryPage
+    // kept here for future: if DevicesPage gets its own TopologyProvider, wire applySnapshot here.
+  }).current;
 
   useEffect(() => {
     let active = true;
 
+    if (canSelectTenant && isLoadingAssignments) {
+      return () => {
+        active = false;
+      };
+    }
+
+    if (canSelectTenant && assignedCustomers.length === 0) {
+      setError("No customer tenants assigned. Contact an administrator.");
+      setLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
     const load = async () => {
       try {
-        const rows = await fetchDevices();
+        const rows = await fetchDevices(tenantId);
         if (!active) return;
         setDevices(rows);
         setError("");
@@ -46,14 +83,26 @@ export function DevicesPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
 
   const isEditing = editingId !== null;
   const tableRows = useMemo(() => devices.slice().sort((a, b) => b.id - a.id), [devices]);
 
   const handleSubmit = async () => {
     if (!form.name.trim()) {
-      setFormError("Asset name is required.");
+      setFormError("Device name is required.");
+      return;
+    }
+    if (!form.assetType.trim()) {
+      setFormError("Device type is required.");
+      return;
+    }
+    if (!form.ipAddress.trim()) {
+      setFormError("IP address is required.");
+      return;
+    }
+    if (!form.protocolType.trim()) {
+      setFormError("Protocol is required.");
       return;
     }
 
@@ -74,6 +123,10 @@ export function DevicesPage() {
     setFormError("");
     try {
       if (isEditing && editingId !== null) {
+        if (!canEditDevices) {
+          setFormError("You do not have permission to edit devices.");
+          return;
+        }
         const updated = await updateDevice(editingId, {
           name: form.name.trim(),
           device_type: form.assetType.trim() || null,
@@ -84,7 +137,12 @@ export function DevicesPage() {
           is_active: form.isActive
         });
         setDevices((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
+        void refreshTopologyIfMounted();
       } else {
+        if (!canCreateDevices) {
+          setFormError("You do not have permission to create devices.");
+          return;
+        }
         const created = await createDevice({
           name: form.name.trim(),
           device_type: form.assetType.trim() || null,
@@ -95,6 +153,11 @@ export function DevicesPage() {
           is_active: form.isActive
         });
         setDevices((prev) => [created, ...prev]);
+        // flush any queued pending edges now that we have a device ID
+        if (panelRef.current) {
+          await panelRef.current.flushPendingEdges(created.id);
+        }
+        void refreshTopologyIfMounted();
       }
 
       setForm(defaultOtTrafficSourceForm());
@@ -115,6 +178,10 @@ export function DevicesPage() {
   };
 
   const handleDelete = async (deviceId: number) => {
+    if (!canDeleteDevices) {
+      setError("You do not have permission to delete devices.");
+      return;
+    }
     const confirmDelete = window.confirm("Remove this traffic source from monitoring inventory?");
     if (!confirmDelete) return;
 
@@ -143,16 +210,18 @@ export function DevicesPage() {
             Register industrial assets as monitored traffic sources for protocol-aware telemetry and ML attack detection.
           </p>
         </div>
-        <Button
-          onClick={() => {
-            setEditingId(null);
-            setForm(defaultOtTrafficSourceForm());
-            setFormError("");
-            setShowFormModal(true);
-          }}
-        >
-          Register OT traffic source
-        </Button>
+        {canCreateDevices ? (
+          <Button
+            onClick={() => {
+              setEditingId(null);
+              setForm(defaultOtTrafficSourceForm());
+              setFormError("");
+              setShowFormModal(true);
+            }}
+          >
+            Register OT traffic source
+          </Button>
+        ) : null}
       </div>
 
       {loading ? <p className="text-sm text-muted">Loading traffic sources…</p> : null}
@@ -210,14 +279,22 @@ export function DevicesPage() {
                   </td>
                   <td className="px-4 py-3 text-muted">{new Date(device.updated_at).toLocaleString()}</td>
                   <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-2">
-                      <Button variant="ghost" size="sm" onClick={() => handleEdit(device)}>
-                        Edit
-                      </Button>
-                      <Button variant="outline" size="sm" onClick={() => handleDelete(device.id)}>
-                        Delete
-                      </Button>
-                    </div>
+                    {canManageDevices ? (
+                      <div className="flex flex-wrap gap-2">
+                        {canEditDevices ? (
+                          <Button variant="ghost" size="sm" onClick={() => handleEdit(device)}>
+                            Edit
+                          </Button>
+                        ) : null}
+                        {canDeleteDevices ? (
+                          <Button variant="outline" size="sm" onClick={() => handleDelete(device.id)}>
+                            Delete
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-muted">Read-only</span>
+                    )}
                   </td>
                 </tr>
               );
@@ -246,12 +323,16 @@ export function DevicesPage() {
               })()
             : undefined
         }
+        existingDevices={devices}
+        editingId={editingId}
         form={form}
         setForm={setForm}
         saving={saving}
         formError={formError}
         onSubmit={handleSubmit}
         onClose={closeModal}
+        onEdgesChanged={() => void refreshTopologyIfMounted()}
+        onPanelRef={(ref) => { panelRef.current = ref; }}
       />
     </section>
   );

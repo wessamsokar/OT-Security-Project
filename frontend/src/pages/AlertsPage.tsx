@@ -1,19 +1,37 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchAlerts, type AlertResponse } from "../api/alertsApi";
 import { connectAlertsStream } from "../api/streamApi";
+import { useTenant } from "../contexts/TenantContext";
 
 export function AlertsPage() {
   const [alerts, setAlerts] = useState<AlertResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { activeTenantId, canSelectTenant, assignedCustomers, isLoadingAssignments } = useTenant();
+  const tenantId = canSelectTenant ? activeTenantId : undefined;
 
   useEffect(() => {
     let active = true;
 
+    if (canSelectTenant && isLoadingAssignments) {
+      return () => {
+        active = false;
+      };
+    }
+
+    if (canSelectTenant && assignedCustomers.length === 0) {
+      setError("No customer tenants assigned. Contact an administrator.");
+      setLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
     const load = async () => {
       try {
-        const rows = await fetchAlerts();
+        const rows = await fetchAlerts(tenantId);
         if (!active) return;
         setAlerts(rows);
         setError("");
@@ -31,21 +49,35 @@ export function AlertsPage() {
     const stream = connectAlertsStream(
       (snapshot) => {
         if (!active) return;
+        if (errorTimerRef.current) {
+          clearTimeout(errorTimerRef.current);
+          errorTimerRef.current = null;
+        }
         setAlerts(snapshot.alerts);
         setError("");
         setLoading(false);
       },
       () => {
         if (!active) return;
-        setError("Live stream disconnected. Showing latest available alerts.");
-      }
+        if (errorTimerRef.current) return;
+        errorTimerRef.current = setTimeout(() => {
+          setError("Live stream disconnected. Showing latest available alerts.");
+          errorTimerRef.current = null;
+        }, 8000); // 8s grace period absorbs normal server-side reconnects
+      },
+      tenantId,
+      { lazy: true, visibilityAware: true }
     );
 
     return () => {
       active = false;
+      if (errorTimerRef.current) {
+        clearTimeout(errorTimerRef.current);
+        errorTimerRef.current = null;
+      }
       stream?.close();
     };
-  }, []);
+  }, [tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
 
   const counts = useMemo(() => {
     return alerts.reduce(

@@ -4,13 +4,15 @@ import { useNavigate } from "react-router-dom";
 
 import { Button } from "../components/ui/Button";
 import { Logo } from "../components/layout/Logo";
-import { clearAuthSession } from "../lib/authSession";
+import { useAuth } from "../contexts/AuthContext";
+import { logoutUser } from "../api/authApi";
 
 /**
  * Full-screen access denial for accounts whose onboarding was rejected (defensive UI; APIs also return 403).
  */
 export function AccessRejectedPage() {
   const navigate = useNavigate();
+  const { clearSession } = useAuth();
 
   return (
     <div className="min-h-screen bg-transparent px-4 py-16 text-text">
@@ -39,8 +41,13 @@ export function AccessRejectedPage() {
               type="button"
               variant="primary"
               className="w-full sm:w-auto"
-              onClick={() => {
-                clearAuthSession();
+              onClick={async () => {
+                try {
+                  await logoutUser();
+                } catch {
+                  /* cookie cleared server-side when reachable */
+                }
+                clearSession();
                 navigate("/login", { replace: true });
               }}
             >

@@ -230,3 +230,31 @@ export function resolveMonitoringBadge(device: DeviceResponse): {
     key: "under_attack"
   };
 }
+
+/** Server-derived operational_state for topology + inventory (Phase 2). */
+export function resolveOperationalBadge(device: DeviceResponse): {
+  label: string;
+  className: string;
+} {
+  const state = (device.operational_state || "unknown").toLowerCase();
+  switch (state) {
+    case "online":
+      return { label: "Online", className: "border-emerald-500/35 bg-emerald-500/15 text-emerald-100" };
+    case "offline":
+      return { label: "Offline", className: "border-white/15 bg-white/8 text-muted" };
+    case "inactive":
+      return { label: "Inactive", className: "border-white/12 bg-white/6 text-muted" };
+    case "anomalous":
+      return {
+        label: "Anomalous",
+        className: "border-rose-500/40 bg-rose-500/15 text-rose-100 animate-pulse"
+      };
+    case "degraded":
+      return { label: "Degraded", className: "border-amber-500/35 bg-amber-500/15 text-amber-100" };
+    case "capture_enabled":
+      return { label: "Capture on", className: "border-violet-500/35 bg-violet-500/15 text-violet-100" };
+    case "unknown":
+    default:
+      return { label: "No traffic", className: "border-slate-500/30 bg-slate-500/10 text-slate-300" };
+  }
+}

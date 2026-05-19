@@ -1,10 +1,17 @@
+# REST Client variables — set in your environment or editor config (never commit real passwords)
+@ics_username = admin
+@ics_password = {{$processEnv ICS_API_PASSWORD}}
+@token = REPLACE_AFTER_LOGIN
+@record_id = 1
+
 ### Login
+# Requires ICS_API_PASSWORD (from `python seed_data.py` output or your configured admin password)
 POST http://localhost:8080/api/v1/auth/login
 Content-Type: application/json
 
 {
-  "username": "admin",
-  "password": "admin123"
+  "username": "{{ics_username}}",
+  "password": "{{ics_password}}"
 }
 
 ### Upload Traffic

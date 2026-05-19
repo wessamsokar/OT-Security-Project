@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import require_permission
+from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.alert import Alert, AlertSeverity
 from app.models.traffic_record import TrafficRecord
@@ -13,7 +15,14 @@ router = APIRouter(prefix="/public", tags=["public"])
 
 
 @router.get("/live-snapshot", response_model=PublicLiveSnapshotResponse)
-def live_snapshot(db: Session = Depends(get_db)) -> PublicLiveSnapshotResponse:
+def live_snapshot(
+    db: Session = Depends(get_db),
+    _user=Depends(require_permission("view_dashboard")),
+) -> PublicLiveSnapshotResponse:
+    settings = get_settings()
+    if not settings.public_live_snapshot_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
     active_rows = (
         db.query(Alert, TrafficRecord)
         .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)

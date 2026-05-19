@@ -55,3 +55,16 @@ class UserAdminResponse(BaseModel):
 class OnboardingRejectRequest(BaseModel):
     """Optional context for rejection email (stored only in audit log future)."""
     reason: str | None = Field(default=None, max_length=2000)
+
+
+class UserCustomerAssignmentUpdate(BaseModel):
+    customer_ids: list[int]
+
+
+class CustomerAssignmentResponse(BaseModel):
+    assigned_customers: list[UserAdminResponse]
+
+
+class BulkAssignmentResponse(BaseModel):
+    assignments: dict[str, list[UserAdminResponse]]
+

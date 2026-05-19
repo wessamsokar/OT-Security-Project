@@ -1,19 +1,7 @@
-import axios from "axios";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useMemo, type ReactNode } from "react";
 
-import { apiClient } from "../api/client";
-import { clearAuthSession, getAuthSession, getStoredOnboardingStatus, patchAuthSessionUser } from "../lib/authSession";
+import { useAuth } from "./AuthContext";
 import type { OnboardingStatus } from "../types/auth";
-
-type MeApi = {
-  id: number;
-  username: string;
-  email: string;
-  role: string;
-  is_email_verified: boolean;
-  is_admin_approved: boolean;
-  onboarding_status: string;
-};
 
 type Ctx = {
   status: OnboardingStatus | null;
@@ -23,67 +11,19 @@ type Ctx = {
 
 const OnboardingAccessContext = createContext<Ctx | null>(null);
 
-function normalizeOnboarding(raw: string | undefined | null): OnboardingStatus | null {
-  const v = String(raw ?? "").toLowerCase();
-  if (v === "pending" || v === "approved" || v === "rejected") {
-    return v;
-  }
-  return null;
-}
-
 export function OnboardingAccessProvider({ children }: { children: ReactNode }) {
-  const [status, setStatus] = useState<OnboardingStatus | null>(() => {
-    return normalizeOnboarding(getAuthSession()?.user?.onboardingStatus ?? null);
-  });
-  const [isLoading, setIsLoading] = useState(true);
+  const { user, isBooting, refresh } = useAuth();
 
-  const refresh = useCallback(async () => {
-    const session = getAuthSession();
-    if (!session?.token) {
-      setStatus(null);
-      setIsLoading(false);
-      return;
-    }
-
-    try {
-      const { data } = await apiClient.get<MeApi>("/v1/auth/me");
-      const nextStatus = normalizeOnboarding(data.onboarding_status) ?? "approved";
-      patchAuthSessionUser({
-        id: String(data.id),
-        email: data.email,
-        fullName: data.username,
-        role: data.role === "admin" ? "admin" : "customer",
-        onboardingStatus: nextStatus
-      });
-      setStatus(nextStatus);
-    } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 401) {
-        clearAuthSession();
-        setStatus(null);
-        window.location.assign("/login");
-        return;
+  const value = useMemo<Ctx>(
+    () => ({
+      status: user?.onboardingStatus ?? null,
+      isLoading: isBooting,
+      refresh: async () => {
+        await refresh();
       }
-      setStatus(getStoredOnboardingStatus() ?? "approved");
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        void refresh();
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [refresh]);
-
-  const value = useMemo<Ctx>(() => ({ status, isLoading, refresh }), [status, isLoading, refresh]);
+    }),
+    [user?.onboardingStatus, isBooting, refresh]
+  );
 
   return <OnboardingAccessContext.Provider value={value}>{children}</OnboardingAccessContext.Provider>;
 }

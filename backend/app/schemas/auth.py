@@ -23,11 +23,6 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
 
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-
-
 class UserResponse(BaseModel):
     id: int
     username: str
@@ -36,6 +31,7 @@ class UserResponse(BaseModel):
     is_email_verified: bool
     is_admin_approved: bool
     onboarding_status: str
+    permissions: list[str] = []
 
     class Config:
         from_attributes = True
@@ -57,3 +53,7 @@ class VerifyEmailRequest(BaseModel):
 class MessageResponse(BaseModel):
     message: str
     token: str | None = None
+
+
+class CsrfResponse(BaseModel):
+    csrf_token: str

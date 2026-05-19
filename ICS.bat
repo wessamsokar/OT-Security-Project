@@ -7,6 +7,11 @@ rem Keep output readable on Windows terminals.
 chcp 65001 >nul 2>&1
 
 call :header
+set "MODE=%~1"
+if "%MODE%"=="" set "MODE=dev"
+if /I "%MODE%"=="prod" goto start_prod
+if /I "%MODE%"=="reset" goto reset_dev
+
 echo [START] Running dev startup script...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start-dev.ps1"
 if errorlevel 1 (
@@ -33,6 +38,16 @@ if errorlevel 1 (
 )
 echo [DONE ] Containers stopped.
 exit /b 0
+
+:start_prod
+echo [START] Running production startup script...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start-prod.ps1"
+exit /b %ERRORLEVEL%
+
+:reset_dev
+echo [RESET] Resetting local dev stack...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\reset-dev.ps1"
+exit /b %ERRORLEVEL%
 
 :header
 cls

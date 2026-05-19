@@ -21,12 +21,20 @@ export type DashboardSummary = {
   ml_status_distribution?: Record<string, number>;
 };
 
-export async function fetchAlerts(): Promise<AlertResponse[]> {
-  const response = await apiClient.get<AlertResponse[]>("/v1/alerts");
+const API_TIMEOUT_MS = 8000;
+
+export async function fetchAlerts(tenantId?: number): Promise<AlertResponse[]> {
+  const response = await apiClient.get<AlertResponse[]>("/v1/alerts", {
+    params: tenantId ? { tenant_id: tenantId } : undefined,
+    timeout: API_TIMEOUT_MS
+  });
   return response.data;
 }
 
-export async function fetchDashboardSummary(): Promise<DashboardSummary> {
-  const response = await apiClient.get<DashboardSummary>("/v1/alerts/dashboard");
+export async function fetchDashboardSummary(tenantId?: number): Promise<DashboardSummary> {
+  const response = await apiClient.get<DashboardSummary>("/v1/alerts/dashboard", {
+    params: tenantId ? { tenant_id: tenantId } : undefined,
+    timeout: API_TIMEOUT_MS
+  });
   return response.data;
 }

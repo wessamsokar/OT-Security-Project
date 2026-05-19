@@ -14,6 +14,7 @@ from app.core.security import create_access_token, get_password_hash
 from app.db.base import Base
 from app.main import app
 from app.models.user import User, UserRole
+from tests.test_credentials import test_password
 
 
 def test_ingest_endpoint_with_auth():
@@ -28,7 +29,7 @@ def test_ingest_endpoint_with_auth():
         admin = User(
             username="admin",
             email="admin@example.com",
-            hashed_password=get_password_hash("admin123"),
+            hashed_password=get_password_hash(test_password()),
             role=UserRole.admin,
         )
         db.add(admin)
@@ -102,7 +103,7 @@ def test_detect_returns_503_on_incomplete_ml_contract():
         admin = User(
             username="admin2",
             email="admin2@example.com",
-            hashed_password=get_password_hash("admin123"),
+            hashed_password=get_password_hash(test_password()),
             role=UserRole.admin,
         )
         db.add(admin)

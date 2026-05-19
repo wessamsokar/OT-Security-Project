@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models.device import Device
 from app.models.traffic_record import TrafficRecord
+from app.services.device_operational import refresh_device_operational_state
 
 
 def resolve_device_id_for_flow(db: Session, user_id: int | None, source_ip: str, destination_ip: str) -> int | None:
@@ -42,6 +43,7 @@ def touch_device_last_traffic(db: Session, device_id: int | None, at: datetime |
     if device is None:
         return
     device.last_traffic_at = at or datetime.utcnow()
+    refresh_device_operational_state(device, now=at)
     db.add(device)
 
 
@@ -103,10 +105,11 @@ def sync_device_after_detection(
     else:
         device.monitoring_status = "active"
 
+    refresh_device_operational_state(device, now=ts)
     db.add(device)
 
 
-def mark_stale_devices_offline(db: Session, *, user_id: int | None, scoped_to_all_devices: bool) -> int:
+def mark_stale_devices_offline(db: Session, *, tenant_ids: list[int] | None) -> int:
     """
     Devices with stale last_traffic_at are marked offline (does not wipe last ML snapshot).
     Returns number of rows updated.
@@ -119,12 +122,13 @@ def mark_stale_devices_offline(db: Session, *, user_id: int | None, scoped_to_al
         Device.last_traffic_at < cutoff,
         Device.monitoring_status != "offline",
     )
-    if not scoped_to_all_devices and user_id is not None:
-        query = query.filter(Device.user_id == user_id)
+    if tenant_ids is not None:
+        query = query.filter(Device.user_id.in_(tenant_ids))
 
     updated = 0
     for d in query.all():
         d.monitoring_status = "offline"
+        refresh_device_operational_state(d)
         db.add(d)
         updated += 1
     return updated

@@ -1,158 +1,235 @@
-import { motion } from "framer-motion";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import { Link } from "react-router-dom";
 
-import { fetchInventoryEdges, type InventoryEdge } from "../api/trafficApi";
-import { fetchMyDevices, type DeviceResponse } from "../api/devicesApi";
+import type { DeviceResponse } from "../api/devicesApi";
+import { Button } from "../components/ui/Button";
+import { OT_META, resolveOperationalBadge } from "../components/devices/otAssetMetadata";
+import { TopologyDetailsPanel } from "../components/topology/TopologyDetailsPanel";
+import { TopologyBoundary } from "../components/topology/TopologyBoundary";
+import { TopologyGraph } from "../components/topology/TopologyGraph";
+import { buildTopologyEdges, buildTopologyNodes } from "../components/topology/topologyAdapter";
+import { TopologyProvider, useTopologyStore } from "../components/topology/topologyStore";
+import { useTopologyLive } from "../components/topology/useTopologyLive";
+import { useAuth } from "../contexts/AuthContext";
+import { useTenant } from "../contexts/TenantContext";
 
-type NodeLayout = {
-  id: string;
-  deviceId: number;
-  label: string;
-  x: number;
-  y: number;
-  monitoring_status: string;
-  last_ml_status: string | null;
-};
+function protocolFromDevice(device: DeviceResponse): string | null {
+  const meta = device.metadata_json ?? {};
+  const raw = meta[OT_META.protocol];
+  return typeof raw === "string" ? raw : null;
+}
 
-function layoutNodes(devices: DeviceResponse[]): NodeLayout[] {
-  const cols = 4;
-  const gapX = 140;
-  const gapY = 90;
-  const startX = 90;
-  const startY = 80;
-  return devices.map((device, index) => {
-    const col = index % cols;
-    const row = Math.floor(index / cols);
-    return {
-      id: `device-${device.id}`,
-      deviceId: device.id,
-      label: device.name,
-      x: startX + col * gapX,
-      y: startY + row * gapY,
-      monitoring_status: device.monitoring_status,
-      last_ml_status: device.last_ml_status
-    };
+function formatTrafficVolume(total: number): string {
+  if (total >= 1_000_000) return `${(total / 1_000_000).toFixed(1)}M pkts`;
+  if (total >= 1_000) return `${(total / 1_000).toFixed(1)}k pkts`;
+  return `${total} pkts`;
+}
+
+function TopologyContent() {
+  const { devices, edges, edgeActivity, selectedDeviceId, selectDevice, liveConnected } = useTopologyStore();
+  const { hasPermission } = useAuth();
+  const { activeTenantId, canSelectTenant, assignedCustomers, isLoadingAssignments } = useTenant();
+  const tenantId = canSelectTenant ? activeTenantId : undefined;
+  const { loading, error } = useTopologyLive(tenantId, {
+    enabled: !canSelectTenant || (!isLoadingAssignments && assignedCustomers.length > 0)
   });
-}
+  const canCreateDevices = hasPermission("create_devices");
 
-/** Display-only stroke for backend monitoring_status (no security inference). */
-function monitoringStroke(status: string): string {
-  switch (status) {
-    case "under_attack":
-      return "#f43f5e";
-    case "suspicious":
-      return "#f59e0b";
-    case "offline":
-      return "#64748b";
-    case "active":
-    default:
-      return "#2563eb";
-  }
-}
+  const activityMap = useMemo(() => {
+    const map = new Map<number, { active: boolean; packet_count: number }>();
+    edgeActivity.forEach((item, edgeId) => {
+      map.set(edgeId, { active: item.active, packet_count: item.packet_count });
+    });
+    return map;
+  }, [edgeActivity]);
 
-export function OtInventoryPage() {
-  const [devices, setDevices] = useState<DeviceResponse[]>([]);
-  const [edges, setEdges] = useState<InventoryEdge[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const nodes = useMemo(() => buildTopologyNodes(devices), [devices]);
+  const deviceIds = useMemo(() => new Set(devices.map((device) => device.id)), [devices]);
+  const graphEdges = useMemo(() => buildTopologyEdges(edges, activityMap, deviceIds), [edges, activityMap, deviceIds]);
+  const selectedDevice = useMemo(
+    () => devices.find((device) => device.id === selectedDeviceId) ?? null,
+    [devices, selectedDeviceId]
+  );
 
-  useEffect(() => {
-    let active = true;
-
-    const load = async () => {
-      try {
-        const [rows, e] = await Promise.all([fetchMyDevices(), fetchInventoryEdges(168)]);
-        if (!active) return;
-        setDevices(rows);
-        setEdges(e);
-        setError("");
-      } catch (err) {
-        if (!active) return;
-        setError(err instanceof Error ? err.message : "Unable to load inventory.");
-      } finally {
-        if (active) setLoading(false);
+  const edgeStats = useMemo(() => {
+    const map = new Map<number, { volume: number; connected: number[] }>();
+    devices.forEach((device) => map.set(device.id, { volume: 0, connected: [] }));
+    edges.forEach((edge) => {
+      const a = map.get(edge.source_device_id);
+      const b = map.get(edge.target_device_id);
+      if (a) {
+        a.volume += edge.packet_count;
+        a.connected.push(edge.target_device_id);
       }
-    };
-
-    void load();
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const nodes = useMemo(() => layoutNodes(devices), [devices]);
-  const map = useMemo(() => new Map(nodes.map((n) => [n.deviceId, n])), [nodes]);
-  const edgePairs = useMemo(() => {
-    const list: Array<{ a: NodeLayout; b: NodeLayout; packets: number }> = [];
-    for (const e of edges) {
-      const na = map.get(e.device_a_id);
-      const nb = map.get(e.device_b_id);
-      if (na && nb) {
-        list.push({ a: na, b: nb, packets: e.packet_count });
+      if (b) {
+        b.volume += edge.packet_count;
+        b.connected.push(edge.source_device_id);
       }
-    }
-    return list;
-  }, [edges, map]);
+    });
+    return map;
+  }, [devices, edges]);
 
   return (
     <section className="rounded-3xl border border-white/10 bg-panel/45 p-6 shadow-panel">
-      <div className="mb-6">
-        <p className="text-xs uppercase tracking-[0.16em] text-brand">Inventory</p>
-        <h1 className="mt-2 text-2xl font-semibold text-white">OT inventory</h1>
-        <p className="mt-1 text-sm text-muted">
-          Device nodes show backend <code className="text-violet-200">monitoring_status</code> and last ML status.
-          Links are drawn only when flows in the last 7d correlate two inventory IPs for the same owner — not a full
-          topology map.
-        </p>
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-[0.16em] text-brand">OT topology</p>
+          <h1 className="mt-2 text-2xl font-semibold text-white">Live OT network visibility</h1>
+          <p className="mt-1 max-w-3xl text-sm text-muted">
+            Live OT operational graph with server-derived status, persisted topology edges, and SSE updates. Graph and
+            inventory table stay synchronized.
+          </p>
+          {liveConnected ? (
+            <span className="mt-2 inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-300">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+              Live stream
+            </span>
+          ) : null}
+        </div>
+        {canCreateDevices ? (
+          <Link to="/dashboard/devices">
+            <Button>Register OT traffic source</Button>
+          </Link>
+        ) : null}
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#0c1630] p-3">
-        {loading ? <p className="text-sm text-muted">Loading…</p> : null}
-        {error ? <p className="text-sm text-danger">{error}</p> : null}
-        {!loading && !error && !nodes.length ? (
-          <p className="text-sm text-muted">No devices found for this user.</p>
-        ) : null}
-        <svg viewBox="0 0 600 340" className="h-[340px] w-full">
-          <defs>
-            <linearGradient id="invLineGlow" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#0ea5e9" stopOpacity="0.15" />
-              <stop offset="50%" stopColor="#38bdf8" stopOpacity="0.55" />
-              <stop offset="100%" stopColor="#06b6d4" stopOpacity="0.15" />
-            </linearGradient>
-          </defs>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[2fr_1fr]">
+        <div className="space-y-3">
+          {canSelectTenant && isLoadingAssignments ? (
+            <p className="text-sm text-muted">Loading customer scope…</p>
+          ) : null}
+          {canSelectTenant && !isLoadingAssignments && assignedCustomers.length === 0 ? (
+            <p className="text-sm text-muted">No customer tenants assigned.</p>
+          ) : null}
+          {loading ? <p className="text-sm text-muted">Loading topology…</p> : null}
+          {error ? <p className="text-sm text-danger">{error}</p> : null}
+          {!loading && !error && !devices.length ? (
+            <p className="text-sm text-muted">No devices found for this tenant.</p>
+          ) : null}
+          <TopologyBoundary>
+            <TopologyGraph nodes={nodes} edges={graphEdges} onSelectNode={selectDevice} />
+          </TopologyBoundary>
+          <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
+            <span className="inline-flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-emerald-400" /> Online
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-rose-400" /> Offline
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-slate-400" /> Unknown
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-amber-400" /> Degraded
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-red-500" /> Anomalous
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-violet-400" /> Capture
+            </span>
+          </div>
+        </div>
 
-          {edgePairs.map(({ a, b, packets }) => (
-            <g key={`${a.id}-${b.id}`}>
-              <title>{`Observed flows (packet sum): ${packets.toLocaleString()}`}</title>
-              <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="url(#invLineGlow)" strokeWidth="1.5" />
-            </g>
-          ))}
+        <div className="space-y-4">
+          <TopologyDetailsPanel device={selectedDevice} />
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-xs text-muted">
+            <p className="font-semibold text-white">Topology notes</p>
+            <ul className="mt-2 space-y-1">
+              <li>Edges are persisted in the topology store and animated when traffic is active.</li>
+              <li>Operational state is derived on the server from telemetry timestamps and ML status.</li>
+              <li>Phase 3 will add zone grouping, MITRE overlays, and attack-path propagation.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
 
-          {nodes.map((node, i) => (
-            <g key={node.id}>
-              <title>{`${node.label}\nmonitoring_status: ${node.monitoring_status}\nlast_ml_status: ${node.last_ml_status ?? "—"}`}</title>
-              <motion.circle
-                cx={node.x}
-                cy={node.y}
-                r="22"
-                fill="none"
-                stroke={monitoringStroke(node.monitoring_status)}
-                strokeWidth="4"
-                opacity="0.95"
-                animate={{ scale: [1, 1.04, 1] }}
-                transition={{ duration: 3 + i * 0.3, repeat: Infinity, ease: "easeInOut" }}
-              />
-              <circle cx={node.x} cy={node.y} r="18" fill="#0f172a" stroke="#334155" strokeWidth="1" />
-              <text x={node.x} y={node.y + 4} textAnchor="middle" fontSize="10" fill="#e2e8f0">
-                {node.monitoring_status.slice(0, 3)}
-              </text>
-              <text x={node.x} y={node.y + 50} textAnchor="middle" fontSize="12" fill="#cbd5e1">
-                {node.label}
-              </text>
-            </g>
-          ))}
-        </svg>
+      <div className="mt-6 overflow-x-auto rounded-2xl border border-white/10">
+        <table className="min-w-full text-left text-sm">
+          <thead className="bg-white/5 text-muted">
+            <tr>
+              <th className="px-4 py-3">Asset</th>
+              <th className="px-4 py-3">Type</th>
+              <th className="px-4 py-3">IP / Protocol</th>
+              <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Last packet</th>
+              <th className="px-4 py-3">Connected</th>
+              <th className="px-4 py-3">Traffic volume</th>
+            </tr>
+          </thead>
+          <tbody>
+            {devices.map((device) => {
+              const badge = resolveOperationalBadge(device);
+              const stats = edgeStats.get(device.id);
+              const connected = stats?.connected ?? [];
+              const connectedNames = connected
+                .map((id) => devices.find((d) => d.id === id)?.name)
+                .filter(Boolean)
+                .slice(0, 2)
+                .join(", ");
+              const protocol = protocolFromDevice(device);
+
+              return (
+                <tr key={device.id} className="border-t border-white/10">
+                  <td className="px-4 py-3 text-white">
+                    <button
+                      type="button"
+                      className="text-left hover:text-brand"
+                      onClick={() => selectDevice(device.id)}
+                    >
+                      {device.name}
+                    </button>
+                  </td>
+                  <td className="px-4 py-3 text-muted">{device.device_type ?? "-"}</td>
+                  <td className="px-4 py-3 text-muted">
+                    {device.ip_address ?? "-"}{" "}
+                    {protocol ? (
+                      <span className="ml-1 inline-block rounded border border-white/10 bg-white/[0.04] px-1.5 py-px text-[10px] text-muted">
+                        {protocol.replace(/_/g, " ")}
+                      </span>
+                    ) : null}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={[
+                        "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium",
+                        badge.className
+                      ].join(" ")}
+                    >
+                      {badge.label}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-muted">
+                    {device.last_traffic_at ? new Date(device.last_traffic_at).toLocaleString() : "No telemetry"}
+                  </td>
+                  <td className="px-4 py-3 text-muted">
+                    {connectedNames || "—"}
+                    {connected.length > 2 ? ` +${connected.length - 2}` : ""}
+                  </td>
+                  <td className="px-4 py-3 text-muted">
+                    {formatTrafficVolume(stats?.volume ?? 0)}
+                  </td>
+                </tr>
+              );
+            })}
+            {!loading && !devices.length ? (
+              <tr className="border-t border-white/10">
+                <td className="px-4 py-3 text-muted" colSpan={7}>
+                  No monitored traffic sources yet. Register one to begin OT telemetry ingestion.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
       </div>
     </section>
+  );
+}
+
+export function OtInventoryPage() {
+  return (
+    <TopologyProvider>
+      <TopologyContent />
+    </TopologyProvider>
   );
 }

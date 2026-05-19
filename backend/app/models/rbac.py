@@ -4,6 +4,7 @@ from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, T
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.permission import role_permissions
 
 user_roles = Table(
     "user_roles",
@@ -22,3 +23,4 @@ class Role(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     users = relationship("User", secondary=user_roles, back_populates="roles")
+    permissions = relationship("Permission", secondary=role_permissions, back_populates="roles")

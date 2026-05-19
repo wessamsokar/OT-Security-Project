@@ -1,21 +1,26 @@
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import require_roles
+from app.api.dependencies import require_permission
 from app.models.alert import Alert
 from app.models.device import Device
 from app.models.model_version import ModelVersion
+from app.models.topology_edge import TopologyEdge
 from app.models.traffic_record import TrafficRecord
-from app.models.user import UserRole
+from app.models.user import User
 from app.schemas.traffic import (
     DetectionResponse,
     ICSTrafficIn,
     InventoryEdgeResponse,
     PacketsByHourResponse,
     PacketsByHourRow,
+    ProtocolDistributionResponse,
+    ProtocolDistributionRow,
+    TelemetryHealthResponse,
     TrafficRecordResponse,
 )
 from app.services.alerts import (
@@ -29,15 +34,14 @@ from app.services.device_linking import (
     sync_device_after_detection,
     touch_device_last_traffic,
 )
+from app.services.topology import mark_stale_edges_inactive, sync_edge_from_traffic_record
+from app.services.audit import record_audit
 from app.services.ml_client import run_inference
 from app.services.ml_infer_contract import validate_ml_infer_response
+from app.services.tenant import get_accessible_tenant_ids
 from app.db.session import get_db
 
 router = APIRouter(prefix="/traffic", tags=["traffic"])
-
-
-def _is_admin(user) -> bool:
-    return bool(user.role and user.role.value == UserRole.admin.value)
 
 
 def _payload_from_record(record: TrafficRecord) -> dict:
@@ -74,7 +78,7 @@ def _payload_from_record(record: TrafficRecord) -> dict:
 def ingest_traffic(
     payload: ICSTrafficIn,
     db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.admin, UserRole.customer)),
+    current_user=Depends(require_permission("ingest_traffic")),
 ) -> TrafficRecordResponse:
     src_ip = str(payload.source_ip)
     dst_ip = str(payload.destination_ip)
@@ -104,7 +108,9 @@ def ingest_traffic(
     db.commit()
     db.refresh(record)
     touch_device_last_traffic(db, matched)
-    mark_stale_devices_offline(db, user_id=current_user.id, scoped_to_all_devices=False)
+    sync_edge_from_traffic_record(db, record)
+    mark_stale_devices_offline(db, tenant_ids=[current_user.id])
+    mark_stale_edges_inactive(db, tenant_ids=[current_user.id])
     db.commit()
     return record
 
@@ -112,12 +118,15 @@ def ingest_traffic(
 @router.post("/{record_id}/detect", response_model=DetectionResponse)
 async def run_detection(
     record_id: int,
+    request: Request,
     db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.admin, UserRole.customer)),
+    current_user=Depends(require_permission("run_detection")),
 ) -> DetectionResponse:
+    actor_id = current_user.id
     query = db.query(TrafficRecord).filter(TrafficRecord.id == record_id)
-    if not _is_admin(current_user):
-        query = query.filter(TrafficRecord.user_id == current_user.id)
+    tenant_ids = get_accessible_tenant_ids(db, current_user)
+    if tenant_ids is not None:
+        query = query.filter(TrafficRecord.user_id.in_(tenant_ids))
     record = query.first()
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
@@ -129,9 +138,21 @@ async def run_detection(
             record.source_ip,
             record.destination_ip,
         )
+        db.add(record)
+        db.commit()
 
-    raw = await run_inference(_payload_from_record(record))
+    ml_payload = _payload_from_record(record)
+    db.close()
+
+    raw = await run_inference(ml_payload)
     verdict = validate_ml_infer_response(dict(raw))
+
+    query = db.query(TrafficRecord).filter(TrafficRecord.id == record_id)
+    if tenant_ids is not None:
+        query = query.filter(TrafficRecord.user_id.in_(tenant_ids))
+    record = query.first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Record not found")
 
     active_model = (
         db.query(ModelVersion)
@@ -139,6 +160,7 @@ async def run_detection(
         .order_by(ModelVersion.created_at.desc())
         .first()
     )
+    audit_actor = db.query(User).filter(User.id == actor_id).first()
 
     ml_status = str(verdict["ml_status"])
     alert_sev = str(verdict["alert_severity"])
@@ -177,25 +199,38 @@ async def run_detection(
         )
         db.add(alert)
 
-    db.add(record)
-    sync_device_after_detection(
-        db,
-        record.device_id,
-        traffic_id=record.id,
-        risk_score=record.risk_score,
-        ml_status=ml_status,
-        evaluated_at=evaluated_at,
-    )
-    db.commit()
+    try:
+        db.add(record)
+        sync_device_after_detection(
+            db,
+            record.device_id,
+            traffic_id=record.id,
+            risk_score=record.risk_score,
+            ml_status=ml_status,
+            evaluated_at=evaluated_at,
+        )
+        record_audit(
+            db,
+            action="traffic.detect",
+            category="detection",
+            actor=audit_actor,
+            request=request,
+            resource_type="traffic_record",
+            resource_id=record.id,
+            metadata={"attack_detected": attack_detected, "ml_status": ml_status},
+        )
+        sync_edge_from_traffic_record(db, record)
+        mark_stale_devices_offline(
+            db,
+            tenant_ids=tenant_ids,
+        )
+        mark_stale_edges_inactive(db, tenant_ids=tenant_ids)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
-    mark_stale_devices_offline(
-        db,
-        user_id=current_user.id,
-        scoped_to_all_devices=_is_admin(current_user),
-    )
-    db.commit()
-
-    return DetectionResponse(
+    response = DetectionResponse(
         record_id=record.id,
         risk_score=record.risk_score,
         ml_status=ml_status,
@@ -209,17 +244,20 @@ async def run_detection(
         else {},
         model_version=active_model.version if active_model else None,
     )
+    return response
 
 
 @router.get("/packets-by-hour", response_model=PacketsByHourResponse)
 def packets_by_hour(
     db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.admin, UserRole.customer)),
+    current_user=Depends(require_permission("view_traffic")),
+    tenant_id: int | None = Query(default=None),
 ) -> PacketsByHourResponse:
     since = datetime.now(timezone.utc) - timedelta(hours=24)
     query = db.query(TrafficRecord).filter(TrafficRecord.created_at >= since)
-    if not _is_admin(current_user):
-        query = query.filter(TrafficRecord.user_id == current_user.id)
+    tenant_ids = get_accessible_tenant_ids(db, current_user, tenant_id)
+    if tenant_ids is not None:
+        query = query.filter(TrafficRecord.user_id.in_(tenant_ids))
     records = query.all()
 
     per_hour_packets: dict[str, int] = defaultdict(int)
@@ -249,59 +287,133 @@ def packets_by_hour(
     )
 
 
+@router.get("/protocol-distribution", response_model=ProtocolDistributionResponse)
+def protocol_distribution(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_permission("view_traffic")),
+    tenant_id: int | None = Query(default=None),
+    window_hours: int = Query(24, ge=1, le=168),
+) -> ProtocolDistributionResponse:
+    since = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+    query = db.query(TrafficRecord).filter(TrafficRecord.created_at >= since)
+    tenant_ids = get_accessible_tenant_ids(db, current_user, tenant_id)
+    if tenant_ids is not None:
+        query = query.filter(TrafficRecord.user_id.in_(tenant_ids))
+
+    counts: dict[str, int] = {
+        "Modbus TCP": 0,
+        "DNP3": 0,
+        "IEC104": 0,
+        "Other": 0,
+    }
+    last_seen: dict[str, datetime | None] = {k: None for k in counts}
+
+    for record in query.all():
+        if record.modbus_function_code is not None:
+            protocol = "Modbus TCP"
+        elif record.dnp3_function_code is not None:
+            protocol = "DNP3"
+        elif record.iec104_type_id is not None:
+            protocol = "IEC104"
+        else:
+            protocol = "Other"
+
+        counts[protocol] += int(record.packet_count or 0)
+        if record.created_at:
+            seen = last_seen.get(protocol)
+            if seen is None or record.created_at > seen:
+                last_seen[protocol] = record.created_at
+
+    total_packets = sum(counts.values())
+    rows = [
+        ProtocolDistributionRow(
+            protocol=protocol,
+            packets=count,
+            last_seen_at=last_seen.get(protocol),
+        )
+        for protocol, count in counts.items()
+    ]
+    rows.sort(key=lambda row: row.packets, reverse=True)
+
+    return ProtocolDistributionResponse(
+        window_hours=window_hours,
+        total_packets=int(total_packets),
+        protocols=rows,
+    )
+
+
+@router.get("/health", response_model=TelemetryHealthResponse)
+def telemetry_health(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_permission("view_traffic")),
+    tenant_id: int | None = Query(default=None),
+) -> TelemetryHealthResponse:
+    now = datetime.now(timezone.utc)
+    window_minutes = 15
+    since_15 = now - timedelta(minutes=window_minutes)
+    since_5 = now - timedelta(minutes=5)
+    since_1 = now - timedelta(minutes=1)
+
+    base_query = db.query(TrafficRecord).filter(TrafficRecord.created_at >= since_15)
+    tenant_ids = get_accessible_tenant_ids(db, current_user, tenant_id)
+    if tenant_ids is not None:
+        base_query = base_query.filter(TrafficRecord.user_id.in_(tenant_ids))
+
+    def _sum_packets(since: datetime) -> int:
+        q = base_query.filter(TrafficRecord.created_at >= since)
+        total = q.with_entities(func.sum(TrafficRecord.packet_count)).scalar()
+        return int(total or 0)
+
+    packets_last_minute = _sum_packets(since_1)
+    packets_last_5min = _sum_packets(since_5)
+    packets_last_15min = _sum_packets(since_15)
+    avg_packets_per_minute_15m = packets_last_15min / float(window_minutes)
+
+    last_seen = base_query.with_entities(func.max(TrafficRecord.created_at)).scalar()
+
+    return TelemetryHealthResponse(
+        window_minutes=window_minutes,
+        packets_last_minute=packets_last_minute,
+        packets_last_5min=packets_last_5min,
+        packets_last_15min=packets_last_15min,
+        avg_packets_per_minute_15m=avg_packets_per_minute_15m,
+        last_traffic_at=last_seen,
+        dropped_packets=None,
+    )
+
+
 @router.get("/inventory-edges", response_model=list[InventoryEdgeResponse])
 def inventory_edges(
     db: Session = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.admin, UserRole.customer)),
+    current_user=Depends(require_permission("view_traffic")),
+    tenant_id: int | None = Query(default=None),
     hours: int = Query(168, ge=1, le=720),
 ) -> list[InventoryEdgeResponse]:
     """
-    Flow aggregates between two devices when both endpoints map to inventory IPs
-    for the same traffic owner. Not a full topology — only observed IP pairs.
+    Legacy shape for inventory graph — backed by persisted topology_edges (connected_to).
     """
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    from app.models.topology_edge import TopologyRelationshipType
+    from app.services.topology import backfill_topology_from_traffic, edges_query_for_user
 
-    d_q = db.query(Device).filter(Device.ip_address.isnot(None))
-    if not _is_admin(current_user):
-        d_q = d_q.filter(Device.user_id == current_user.id)
-    devices = d_q.all()
-    by_id = {d.id: d for d in devices}
-    ipkey_to_id: dict[tuple[int, str], int] = {}
-    for d in devices:
-        if d.ip_address:
-            ipkey_to_id[(d.user_id, d.ip_address.strip())] = d.id
-
-    rec_q = db.query(TrafficRecord).filter(
-        TrafficRecord.created_at >= since,
-        TrafficRecord.device_id.isnot(None),
+    tenant_ids = get_accessible_tenant_ids(db, current_user, tenant_id)
+    backfill_topology_from_traffic(
+        db,
+        tenant_ids=tenant_ids,
+        hours=hours,
     )
-    if not _is_admin(current_user):
-        rec_q = rec_q.filter(TrafficRecord.user_id == current_user.id)
+    db.commit()
 
-    edge_counts: dict[tuple[int, int], int] = defaultdict(int)
-    for r in rec_q.all():
-        uid = r.user_id
-        if uid is None:
-            continue
-        d = by_id.get(r.device_id)
-        if not d or not d.ip_address:
-            continue
-        dip = d.ip_address.strip()
-        sip, rip = r.source_ip.strip(), r.destination_ip.strip()
-        peer_ip: str | None = None
-        if dip == sip:
-            peer_ip = rip
-        elif dip == rip:
-            peer_ip = sip
-        else:
-            continue
-        peer_id = ipkey_to_id.get((uid, peer_ip))
-        if peer_id is None or peer_id == r.device_id:
-            continue
-        a, b = sorted((r.device_id, peer_id))
-        edge_counts[(a, b)] += int(r.packet_count)
+    edges = (
+        edges_query_for_user(db, current_user, tenant_id)
+        .filter(TopologyEdge.relationship_type == TopologyRelationshipType.connected_to.value)
+        .all()
+    )
+    pair_counts: dict[tuple[int, int], int] = defaultdict(int)
+    for edge in edges:
+        a, b = sorted((edge.source_device_id, edge.target_device_id))
+        pair_counts[(a, b)] += int(edge.packet_count or 0)
 
     return [
         InventoryEdgeResponse(device_a_id=a, device_b_id=b, packet_count=cnt)
-        for (a, b), cnt in sorted(edge_counts.items(), key=lambda x: (-x[1], x[0][0], x[0][1]))
+        for (a, b), cnt in sorted(pair_counts.items(), key=lambda x: (-x[1], x[0][0], x[0][1]))
     ]

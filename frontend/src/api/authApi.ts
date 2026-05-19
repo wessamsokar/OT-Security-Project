@@ -1,11 +1,6 @@
 import { apiClient } from "./client";
-import type { AuthApiResponse, AuthFormValues, OnboardingStatus, OtRegisterPayload } from "../types/auth";
+import type { AuthApiResponse, AuthFormValues, OnboardingStatus, OtRegisterPayload, PermissionCode, UserRole } from "../types/auth";
 import axios from "axios";
-
-type LoginResponse = {
-  access_token: string;
-  token_type: "bearer";
-};
 
 type MeResponse = {
   id: number;
@@ -15,6 +10,7 @@ type MeResponse = {
   is_email_verified: boolean;
   is_admin_approved: boolean;
   onboarding_status: string;
+  permissions?: PermissionCode[];
 };
 
 type FastApiValidationError = {
@@ -34,6 +30,14 @@ function normalizeMeOnboarding(raw: string | undefined): OnboardingStatus | unde
   return undefined;
 }
 
+function normalizeRole(raw: string | undefined): UserRole {
+  const v = String(raw ?? "").toLowerCase();
+  if (v === "admin" || v === "customer" || v === "analyst" || v === "viewer") {
+    return v;
+  }
+  return "customer";
+}
+
 function parseApiError(error: unknown, fallbackMessage: string): Error {
   if (!axios.isAxiosError<FastApiErrorResponse>(error)) {
     return new Error(fallbackMessage);
@@ -41,6 +45,12 @@ function parseApiError(error: unknown, fallbackMessage: string): Error {
 
   if (error.response?.status === 401) {
     return new Error("Invalid email or password.");
+  }
+
+  if (error.response?.status === 404) {
+    return new Error(
+      "Sign-in API is unreachable (404). Restart the dev stack (ICS.bat) so the gateway can reach the backend."
+    );
   }
 
   if (error.response?.status === 403) {
@@ -76,33 +86,32 @@ export async function loginUser(values: AuthFormValues): Promise<AuthApiResponse
   }
 
   try {
-    const loginResponse = await apiClient.post<LoginResponse>("/v1/auth/login", {
+    await apiClient.post("/v1/auth/login", {
       username: values.email.trim(),
       password: values.password
     });
 
-    const token = loginResponse.data.access_token;
-    const meResponse = await apiClient.get<MeResponse>("/v1/auth/me", {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    });
+    const meResponse = await apiClient.get<MeResponse>("/v1/auth/me");
 
     const me = meResponse.data;
 
     return {
-      accessToken: token,
       user: {
         id: String(me.id),
         email: me.email,
         fullName: me.username,
-        role: me.role === "admin" ? "admin" : "customer",
-        onboardingStatus: normalizeMeOnboarding(me.onboarding_status)
+        role: normalizeRole(me.role),
+        onboardingStatus: normalizeMeOnboarding(me.onboarding_status),
+        permissions: me.permissions ?? []
       }
     };
   } catch (error) {
     throw parseApiError(error, "Unable to sign in right now.");
   }
+}
+
+export async function logoutUser(): Promise<void> {
+  await apiClient.post("/v1/auth/logout");
 }
 
 export async function registerUser(payload: OtRegisterPayload): Promise<void> {

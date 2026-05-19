@@ -12,13 +12,10 @@ from app.models.device import Device
 from app.models.traffic_record import TrafficRecord
 from app.models.user import User, UserRole
 from app.schemas.model import SocHealthResponse
+from app.services.tenant import get_accessible_tenant_ids
 
 
-def _is_admin(user: User) -> bool:
-    return bool(user.role and user.role.value == UserRole.admin.value)
-
-
-def build_soc_health(db: Session, current_user: User, *, window_hours: int = 24) -> SocHealthResponse:
+def build_soc_health(db: Session, current_user: User, *, window_hours: int = 24, requested_tenant_id: int | None = None) -> SocHealthResponse:
     since = datetime.now(timezone.utc) - timedelta(hours=max(1, window_hours))
 
     traffic_base = db.query(TrafficRecord).filter(TrafficRecord.created_at >= since)
@@ -27,11 +24,11 @@ def build_soc_health(db: Session, current_user: User, *, window_hours: int = 24)
     )
     device_base = db.query(Device)
 
-    if not _is_admin(current_user):
-        uid = current_user.id
-        traffic_base = traffic_base.filter(TrafficRecord.user_id == uid)
-        alert_base = alert_base.filter(TrafficRecord.user_id == uid)
-        device_base = device_base.filter(Device.user_id == uid)
+    tenant_ids = get_accessible_tenant_ids(db, current_user, requested_tenant_id)
+    if tenant_ids is not None:
+        traffic_base = traffic_base.filter(TrafficRecord.user_id.in_(tenant_ids))
+        alert_base = alert_base.filter(TrafficRecord.user_id.in_(tenant_ids))
+        device_base = device_base.filter(Device.user_id.in_(tenant_ids))
 
     flows_in_window = traffic_base.with_entities(func.count(TrafficRecord.id)).scalar() or 0
 

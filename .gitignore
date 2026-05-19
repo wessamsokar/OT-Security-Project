@@ -6,13 +6,16 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+pytest-cache-files-*/
 .mypy_cache/
 .coverage
+__pycache__/
 
 # Node
 node_modules/
 dist/
 coverage/
+*.tsbuildinfo
 
 # Env
 .env
@@ -21,6 +24,9 @@ coverage/
 
 # Logs
 *.log
+captures/
+*.pcap
+*.pcapng
 
 # IDE
 .vscode/

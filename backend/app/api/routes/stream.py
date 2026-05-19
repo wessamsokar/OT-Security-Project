@@ -1,21 +1,46 @@
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone
-from typing import Generator
+from time import monotonic
+from collections.abc import AsyncGenerator
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from app.api.dependencies import enforce_ot_platform_access
+from app.core.config import get_settings
 from app.core.security import decode_token
 from app.db.session import SessionLocal
 from app.models.alert import Alert
 from app.models.model_version import ModelVersion
 from app.models.traffic_record import TrafficRecord
-from app.models.user import User, UserRole
+from app.models.user import User
+from app.services.permissions import user_has_permission, user_is_admin
 from app.services.dashboard_summary import build_dashboard_summary
+from app.services.tenant import get_accessible_tenant_ids
+from app.services.topology import build_topology_snapshot
 
 router = APIRouter(prefix="/stream", tags=["stream"])
+settings = get_settings()
+logger = logging.getLogger(__name__)
+_active_streams = 0
+_stream_lock = asyncio.Lock()
+
+
+async def _try_acquire_stream() -> bool:
+    global _active_streams
+    async with _stream_lock:
+        if _active_streams >= settings.sse_max_connections:
+            return False
+        _active_streams += 1
+        return True
+
+
+async def _release_stream() -> None:
+    global _active_streams
+    async with _stream_lock:
+        _active_streams = max(0, _active_streams - 1)
 
 
 def _extract_confidence(metrics: dict) -> float:
@@ -39,18 +64,18 @@ def _serialize_alert(alert: Alert) -> dict:
     }
 
 
-def _build_snapshot(user: User) -> dict:
+def _build_snapshot(user: User, tenant_id: int | None = None) -> dict:
     db = SessionLocal()
     try:
-        is_admin = bool(user.role and user.role.value == UserRole.admin.value)
+        tenant_ids = get_accessible_tenant_ids(db, user, tenant_id)
         alerts_query = db.query(Alert).join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
 
-        if not is_admin:
-            alerts_query = alerts_query.filter(TrafficRecord.user_id == user.id)
+        if tenant_ids is not None:
+            alerts_query = alerts_query.filter(TrafficRecord.user_id.in_(tenant_ids))
 
         alerts = alerts_query.order_by(Alert.created_at.desc()).limit(20).all()
 
-        dashboard = build_dashboard_summary(db, user)
+        dashboard = build_dashboard_summary(db, user, requested_tenant_id=tenant_id)
 
         active_model = (
             db.query(ModelVersion)
@@ -85,17 +110,9 @@ def _validate_stream_token(token: str) -> User:
             user = db.query(User).filter(User.username == sub).first()
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-        allowed = {
-            UserRole.admin.value,
-            UserRole.customer.value,
-            UserRole.analyst.value,  # legacy compatibility
-            UserRole.viewer.value,  # legacy compatibility
-        }
-        user_roles = {user.role.value if user.role else None}
-        if getattr(user, "roles", None):
-            user_roles.update({role.name for role in user.roles if role and role.name})
-
-        if not {role for role in user_roles if role}.intersection(allowed):
+        if not user.is_active:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive user")
+        if not user_has_permission(db, user, "view_streams"):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
         enforce_ot_platform_access(user)
         return user
@@ -104,17 +121,76 @@ def _validate_stream_token(token: str) -> User:
 
 
 @router.get("/alerts")
-async def alerts_stream(request: Request, token: str = Query(..., min_length=8)) -> StreamingResponse:
-    user = _validate_stream_token(token)
+async def alerts_stream(request: Request, tenant_id: int | None = None) -> StreamingResponse:
+    raw_token = request.cookies.get(settings.auth_cookie_name)
+    if not raw_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    user = _validate_stream_token(raw_token)
+    if not await _try_acquire_stream():
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many active streams")
 
-    async def event_generator() -> Generator[str, None, None]:
-        while True:
-            if await request.is_disconnected():
-                break
+    async def event_generator() -> AsyncGenerator[str, None]:
+        started = monotonic()
+        logger.info("SSE stream opened", extra={"user_id": user.id, "active_streams": _active_streams})
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                if monotonic() - started > settings.sse_max_connection_seconds:
+                    yield "event: close\ndata: {\"reason\":\"max_duration\"}\n\n"
+                    break
 
-            snapshot = _build_snapshot(user)
-            yield f"event: snapshot\ndata: {json.dumps(snapshot)}\n\n"
-            await asyncio.sleep(5)
+                snapshot = _build_snapshot(user, tenant_id)
+                yield f"event: snapshot\ndata: {json.dumps(snapshot)}\n\n"
+                await asyncio.sleep(settings.sse_interval_seconds)
+        finally:
+            await _release_stream()
+            logger.info("SSE stream closed", extra={"user_id": user.id, "active_streams": _active_streams})
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
+
+
+@router.get("/topology")
+async def topology_stream(request: Request, tenant_id: int | None = None) -> StreamingResponse:
+    """Live OT topology: node operational state, edges, and link activity (separate from alerts)."""
+    raw_token = request.cookies.get(settings.auth_cookie_name)
+    if not raw_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    user = _validate_stream_token(raw_token)
+    if not await _try_acquire_stream():
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many active streams")
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        started = monotonic()
+        seq = 0
+        logger.info("Topology SSE opened", extra={"user_id": user.id})
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                if monotonic() - started > settings.sse_max_connection_seconds:
+                    yield "event: close\ndata: {\"reason\":\"max_duration\"}\n\n"
+                    break
+
+                db = SessionLocal()
+                try:
+                    snapshot = build_topology_snapshot(db, user, tenant_id)
+                    db.commit()
+                finally:
+                    db.close()
+
+                seq += 1
+                snapshot["seq"] = seq
+                yield f"event: topology_batch\ndata: {json.dumps(snapshot)}\n\n"
+                await asyncio.sleep(settings.sse_interval_seconds)
+        finally:
+            await _release_stream()
+            logger.info("Topology SSE closed", extra={"user_id": user.id})
 
     headers = {
         "Cache-Control": "no-cache",

@@ -1,5 +1,7 @@
 import { apiClient } from "./client";
 
+const API_TIMEOUT_MS = 15000;
+
 export type ActiveThreat = {
   threat_id: string;
   attack_vector: string;
@@ -46,22 +48,34 @@ export type SocHealthPayload = {
   avg_last_ml_risk_score: number | null;
 };
 
-export async function fetchActiveThreats(): Promise<ActiveThreat[]> {
-  const response = await apiClient.get<ActiveThreat[]>("/v1/alerts/active-threats");
+export async function fetchActiveThreats(tenantId?: number): Promise<ActiveThreat[]> {
+  const response = await apiClient.get<ActiveThreat[]>("/v1/alerts/active-threats", {
+    params: tenantId ? { tenant_id: tenantId } : undefined,
+    timeout: API_TIMEOUT_MS
+  });
   return response.data;
 }
 
-export async function fetchPacketsByHour(): Promise<PacketsByHourResponse> {
-  const response = await apiClient.get<PacketsByHourResponse>("/v1/traffic/packets-by-hour");
+export async function fetchPacketsByHour(tenantId?: number): Promise<PacketsByHourResponse> {
+  const response = await apiClient.get<PacketsByHourResponse>("/v1/traffic/packets-by-hour", {
+    params: tenantId ? { tenant_id: tenantId } : undefined,
+    timeout: API_TIMEOUT_MS
+  });
   return response.data;
 }
 
-export async function fetchMttr(): Promise<MttrSummary> {
-  const response = await apiClient.get<MttrSummary>("/v1/alerts/mttr");
+export async function fetchMttr(tenantId?: number): Promise<MttrSummary> {
+  const response = await apiClient.get<MttrSummary>("/v1/alerts/mttr", {
+    params: tenantId ? { tenant_id: tenantId } : undefined,
+    timeout: API_TIMEOUT_MS
+  });
   return response.data;
 }
 
-export async function fetchSocHealth(): Promise<SocHealthPayload> {
-  const response = await apiClient.get<SocHealthPayload>("/v1/model/soc-health");
+export async function fetchSocHealth(tenantId?: number): Promise<SocHealthPayload> {
+  const response = await apiClient.get<SocHealthPayload>("/v1/model/soc-health", {
+    params: tenantId ? { tenant_id: tenantId } : undefined,
+    timeout: API_TIMEOUT_MS
+  });
   return response.data;
 }

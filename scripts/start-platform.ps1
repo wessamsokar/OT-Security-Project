@@ -71,7 +71,7 @@ function Wait-HttpOk([string]$Url, [int]$MaxAttempts = 30, [int]$DelaySeconds = 
     for ($i = 1; $i -le $MaxAttempts; $i++) {
         try {
             $resp = Invoke-WebRequest -Uri $Url -TimeoutSec 10 -UseBasicParsing
-            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 500) {
+            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) {
                 Write-Step "Health check passed: $Url"
                 return
             }
@@ -82,6 +82,13 @@ function Wait-HttpOk([string]$Url, [int]$MaxAttempts = 30, [int]$DelaySeconds = 
     }
 
     throw "Health check failed for $Url"
+}
+
+function Ensure-EnvFile([string]$ExamplePath, [string]$TargetPath) {
+    if (-not (Test-Path $TargetPath)) {
+        Write-Step "No $TargetPath found. Creating from $ExamplePath"
+        Copy-Item -Path $ExamplePath -Destination $TargetPath -Force
+    }
 }
 
 Write-Step "Checking required tools"
@@ -96,10 +103,9 @@ docker compose version | Out-Null
 
 Set-Location (Join-Path $PSScriptRoot "..")
 
-if (-not (Test-Path ".env")) {
-    Write-Step "No .env found. Creating from .env.example"
-    Copy-Item -Path ".env.example" -Destination ".env" -Force
-}
+Ensure-EnvFile -ExamplePath ".env.example" -TargetPath ".env"
+Ensure-EnvFile -ExamplePath "backend/.env.example" -TargetPath "backend/.env"
+Ensure-EnvFile -ExamplePath "ml-service/.env.example" -TargetPath "ml-service/.env"
 
 Write-Step "Building and starting services in hot-reload dev mode"
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build `
@@ -113,10 +119,12 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -w /app back
 
 Write-Step "Verifying services"
 docker compose -f docker-compose.yml -f docker-compose.dev.yml ps
-Wait-HttpOk -Url "http://localhost:8080" -MaxAttempts 40 -DelaySeconds 2
 Wait-HttpOk -Url "http://localhost:8080/healthz" -MaxAttempts 30 -DelaySeconds 2
+Wait-HttpOk -Url "http://localhost:8080/readyz" -MaxAttempts 30 -DelaySeconds 2
+Wait-HttpOk -Url "http://localhost:8080" -MaxAttempts 40 -DelaySeconds 2
 
 Write-Host "" 
 Write-Host "ICS platform is up and ready" -ForegroundColor Green
 Write-Host "Open: http://localhost:8080" -ForegroundColor Green
-Write-Host "Login: admin / admin123" -ForegroundColor Green
+Write-Host "Login: use the one-time password printed by seed_data.py (username: admin)" -ForegroundColor Green
+Write-Host "       Or run scripts/dev-local-admin.ps1 for optional bootstrap credentials." -ForegroundColor Green

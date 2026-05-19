@@ -1,5 +1,3 @@
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 @tailwind base;
 @tailwind components;
@@ -117,6 +115,104 @@
   .text-balance {
     text-wrap: balance;
   }
+}
+
+@keyframes topology-node-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 18px rgba(99, 102, 241, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 28px rgba(99, 102, 241, 0.35);
+  }
+}
+
+@keyframes topology-edge-glow {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+@keyframes soc-pulse-soft {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(255, 255, 255, 0);
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(255, 255, 255, 0.25);
+  }
+}
+
+@keyframes soc-pulse-emerald {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(16, 185, 129, 0);
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(16, 185, 129, 0.35);
+  }
+}
+
+@keyframes soc-pulse-amber {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(245, 158, 11, 0);
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(245, 158, 11, 0.35);
+  }
+}
+
+@keyframes soc-pulse-rose {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(244, 63, 94, 0);
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(244, 63, 94, 0.35);
+  }
+}
+
+@keyframes soc-pulse-violet {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(139, 92, 246, 0);
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(139, 92, 246, 0.35);
+  }
+}
+
+.topology-node-pulse {
+  animation: topology-node-pulse 2.4s ease-in-out infinite;
+}
+
+.topology-edge-glow {
+  animation: topology-edge-glow 1.6s ease-in-out infinite;
+}
+
+.soc-pulse-live {
+  animation: soc-pulse-soft 1.6s ease-in-out infinite;
+}
+
+.soc-pulse-emerald {
+  animation: soc-pulse-emerald 2.2s ease-in-out infinite;
+}
+
+.soc-pulse-amber {
+  animation: soc-pulse-amber 2.2s ease-in-out infinite;
+}
+
+.soc-pulse-rose {
+  animation: soc-pulse-rose 1.6s ease-in-out infinite;
+}
+
+.soc-pulse-violet {
+  animation: soc-pulse-violet 2.2s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

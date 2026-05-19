@@ -16,15 +16,26 @@ import {
   fetchUsers,
   rejectOnboardingRegistration,
   updateUser,
+  fetchUserCustomers,
+  updateUserCustomers,
+  fetchBulkAssignments,
   type ActiveThreatResponse,
   type IncidentResponse,
-  type UserAdminResponse
+  type UserAdminResponse,
+  type BulkAssignmentResponse
 } from "../api/usersApi";
 import { formatIndustry } from "../lib/industryOptions";
 import { Button } from "../components/ui/Button";
 import { InputField } from "../components/ui/InputField";
+import { useAuth } from "../contexts/AuthContext";
+import type { UserRole } from "../types/auth";
+
+const ROLE_OPTIONS: UserRole[] = ["customer", "analyst", "viewer", "admin"];
 
 export function AdminUsersPage() {
+  const { hasPermission } = useAuth();
+  const canManageUsers = hasPermission("manage_users");
+  const canApproveUsers = hasPermission("approve_users");
   const [isAddUserOpen, setIsAddUserOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserAdminResponse | null>(null);
   const [modalMode, setModalMode] = useState<"view" | "edit" | null>(null);
@@ -37,15 +48,17 @@ export function AdminUsersPage() {
   const [userDataLoading, setUserDataLoading] = useState(false);
   const [userDataError, setUserDataError] = useState("");
   const [users, setUsers] = useState<UserAdminResponse[]>([]);
+  const [bulkAssignments, setBulkAssignments] = useState<Record<string, UserAdminResponse[]>>({});
+  const [activeTab, setActiveTab] = useState<"customer" | "analyst" | "viewer" | "admin">("customer");
   const [query, setQuery] = useState("");
   const [newUsername, setNewUsername] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
-  const [newRole, setNewRole] = useState<"admin" | "customer">("customer");
+  const [newRole, setNewRole] = useState<UserRole>("customer");
   const [editUsername, setEditUsername] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editPassword, setEditPassword] = useState("");
-  const [editRole, setEditRole] = useState<"admin" | "customer">("customer");
+  const [editRole, setEditRole] = useState<UserRole>("customer");
   const [editActive, setEditActive] = useState(true);
   const [editEmailVerified, setEditEmailVerified] = useState(false);
   const [newAdminApproved, setNewAdminApproved] = useState(true);
@@ -59,14 +72,22 @@ export function AdminUsersPage() {
   const [reviewError, setReviewError] = useState("");
   const [error, setError] = useState("");
 
+  const [isAssignmentModalOpen, setIsAssignmentModalOpen] = useState(false);
+  const [assignmentUser, setAssignmentUser] = useState<UserAdminResponse | null>(null);
+  const [assignedCustomerIds, setAssignedCustomerIds] = useState<number[]>([]);
+  const [assignmentLoading, setAssignmentLoading] = useState(false);
+  const [assignmentError, setAssignmentError] = useState("");
+  const [assignmentSearch, setAssignmentSearch] = useState("");
+
   useEffect(() => {
     let active = true;
 
     const load = async () => {
       try {
-        const userRows = await fetchUsers();
+        const [userRows, assignmentsRes] = await Promise.all([fetchUsers(), fetchBulkAssignments()]);
         if (!active) return;
         setUsers(userRows);
+        setBulkAssignments(assignmentsRes.assignments);
         setError("");
       } catch (err) {
         if (!active) return;
@@ -83,8 +104,9 @@ export function AdminUsersPage() {
   }, []);
 
   const loadUsers = async (search?: string) => {
-    const rows = await fetchUsers(search);
+    const [rows, assignmentsRes] = await Promise.all([fetchUsers(search), fetchBulkAssignments()]);
     setUsers(rows);
+    setBulkAssignments(assignmentsRes.assignments);
   };
 
   function onboardingBadgeClass(status: UserAdminResponse["onboarding_status"]): string {
@@ -245,6 +267,47 @@ export function AdminUsersPage() {
     }
   };
 
+  const openAssignmentModal = async (user: UserAdminResponse) => {
+    setAssignmentUser(user);
+    setIsAssignmentModalOpen(true);
+    setAssignmentLoading(true);
+    setAssignmentError("");
+    try {
+      const res = await fetchUserCustomers(user.id);
+      setAssignedCustomerIds(res.assigned_customers.map(c => c.id));
+    } catch (err) {
+      setAssignmentError(err instanceof Error ? err.message : "Unable to load assignments.");
+    } finally {
+      setAssignmentLoading(false);
+    }
+  };
+
+  const closeAssignmentModal = () => {
+    setAssignmentUser(null);
+    setIsAssignmentModalOpen(false);
+  };
+
+  const handleSaveAssignments = async () => {
+    if (!assignmentUser) return;
+    setAssignmentLoading(true);
+    setAssignmentError("");
+    try {
+      await updateUserCustomers(assignmentUser.id, assignedCustomerIds);
+      // Optimistic update
+      setBulkAssignments(prev => {
+        const next = { ...prev };
+        next[assignmentUser.id] = users.filter(u => assignedCustomerIds.includes(u.id));
+        return next;
+      });
+      closeAssignmentModal();
+    } catch (err) {
+      setAssignmentError(err instanceof Error ? err.message : "Unable to save assignments.");
+    } finally {
+      setAssignmentLoading(false);
+    }
+  };
+
+
   return (
     <section className="rounded-3xl border border-white/10 bg-panel/45 p-6 shadow-panel">
       <div className="mb-6">
@@ -260,109 +323,139 @@ export function AdminUsersPage() {
 
       <div className="space-y-6">
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <p className="mb-3 text-xs uppercase tracking-[0.16em] text-muted">Users CRUD</p>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-muted">Create new users and manage access.</p>
-            <Button onClick={() => {
-              setError("");
-              setIsAddUserOpen(true);
-            }}>Add user</Button>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+            <div className="flex-1">
+              <p className="text-sm text-muted">Manage access across the platform.</p>
+            </div>
+            {canManageUsers ? (
+              <Button onClick={() => {
+                setError("");
+                setIsAddUserOpen(true);
+              }}>Add user</Button>
+            ) : null}
           </div>
 
-          <div className="mt-5 rounded-xl border border-white/10 bg-white/5 p-3">
-            <div className="flex flex-wrap items-end gap-2">
-              <div className="min-w-[220px] flex-1">
-                <InputField
-                  id="admin-users-search"
-                  label="Search users"
-                  value={query}
-                  onChange={setQuery}
-                  placeholder="username or email"
-                />
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={async () => {
-                  setSaving(true);
-                  try {
-                    await loadUsers(query.trim() || undefined);
-                  } finally {
-                    setSaving(false);
-                  }
-                }}
-                loading={saving}
-              >
-                Search
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={async () => {
-                  setQuery("");
-                  setSaving(true);
-                  try {
-                    await loadUsers();
-                  } finally {
-                    setSaving(false);
-                  }
-                }}
-                loading={saving}
-              >
-                Reset
-              </Button>
+          <div className="flex flex-wrap items-end gap-3 mb-5 border-b border-white/10 pb-4">
+            <div className="min-w-[220px] flex-1">
+              <InputField
+                id="admin-users-search"
+                label="Search users"
+                value={query}
+                onChange={setQuery}
+                placeholder="username or email"
+              />
             </div>
+            <Button size="sm" variant="outline" onClick={async () => {
+              setSaving(true);
+              try { await loadUsers(query.trim() || undefined); } finally { setSaving(false); }
+            }} loading={saving}>Search</Button>
+            <Button size="sm" variant="ghost" onClick={async () => {
+              setQuery("");
+              setSaving(true);
+              try { await loadUsers(); } finally { setSaving(false); }
+            }} loading={saving}>Reset</Button>
+          </div>
 
-            <div className="mt-3 space-y-2">
-              {users.map((user) => (
-                <div key={user.id} className="rounded-lg border border-white/10 bg-white/5 p-3 text-xs text-muted">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="flex shrink-0 items-center justify-start">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        loading={reviewOpeningId === user.id}
-                        className="!border-[#722f37]/80 !bg-gradient-to-r !from-[#6b1528] !to-[#5c121f] !text-white shadow-md hover:!brightness-110 focus-visible:!ring-[#9f1239]/60"
-                        onClick={() => void openRegistrationReview(user)}
-                      >
-                        Verify
-                      </Button>
-                    </div>
-                    <div className="flex-1 text-center">
-                      <p className="text-sm text-white">{user.username}</p>
-                      <p className="text-xs text-muted">{user.email}</p>
-                      <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
-                        <span className={onboardingBadgeClass(user.onboarding_status)}>
-                          {user.onboarding_status === "pending"
-                            ? "Pending verification"
-                            : user.onboarding_status === "approved"
-                              ? "Approved"
-                              : "Rejected"}
-                        </span>
-                        {user.is_email_verified ? (
-                          <span className="rounded-md border border-sky-500/35 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-300">
-                            Email OK
+          <div className="flex gap-2 border-b border-white/10 mb-4 overflow-x-auto no-scrollbar">
+            {([
+              { id: "customer", label: "Customers", count: users.filter(u => u.role === "customer").length, color: "text-cyan-400", border: "border-cyan-500/50", bg: "bg-cyan-500/10" },
+              { id: "analyst", label: "Analysts", count: users.filter(u => u.role === "analyst").length, color: "text-amber-400", border: "border-amber-500/50", bg: "bg-amber-500/10" },
+              { id: "viewer", label: "Viewers", count: users.filter(u => u.role === "viewer").length, color: "text-slate-300", border: "border-slate-400/50", bg: "bg-slate-400/10" },
+              { id: "admin", label: "Admins", count: users.filter(u => u.role === "admin").length, color: "text-rose-400", border: "border-rose-500/50", bg: "bg-rose-500/10" }
+            ] as const).map(tab => {
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  className={`flex items-center gap-2 px-4 py-2 border-b-2 text-sm font-medium transition-colors ${isActive ? `${tab.border} ${tab.color}` : "border-transparent text-muted hover:text-white"}`}
+                >
+                  {tab.label}
+                  <span className={`px-2 py-0.5 rounded-full text-xs ${isActive ? tab.bg : "bg-white/5"}`}>{tab.count}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="space-y-3">
+            {users.filter(u => u.role === activeTab).map((user) => {
+              const userAssignments = bulkAssignments[user.id] || [];
+              
+              return (
+                <div key={user.id} className="group rounded-xl border border-white/5 bg-white/[0.02] p-4 transition-colors duration-300 hover:bg-white/[0.04]">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="flex gap-4">
+                      {canApproveUsers ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          loading={reviewOpeningId === user.id}
+                          className="!border-[#722f37]/80 !bg-gradient-to-r !from-[#6b1528] !to-[#5c121f] !text-white shadow-md hover:!brightness-110 focus-visible:!ring-[#9f1239]/60 shrink-0 h-fit"
+                          onClick={() => void openRegistrationReview(user)}
+                        >
+                          Verify
+                        </Button>
+                      ) : null}
+                      
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="text-sm font-semibold text-white">{user.company_name || user.username}</p>
+                          <span className={`h-2 w-2 rounded-full ${user.is_active ? "bg-emerald-500" : "bg-rose-500"}`} title={user.is_active ? "Active" : "Inactive"} />
+                        </div>
+                        <p className="text-xs text-muted mb-2">{user.email}</p>
+                        
+                        <div className="flex flex-wrap items-center gap-2 mb-3">
+                          <span className={onboardingBadgeClass(user.onboarding_status)}>
+                            {user.onboarding_status === "pending" ? "Pending verification" : user.onboarding_status === "approved" ? "Approved" : "Rejected"}
                           </span>
-                        ) : (
-                          <span className="text-[10px] uppercase tracking-wide text-muted">Email unverified</span>
+                          {user.is_email_verified ? (
+                            <span className="rounded-md border border-sky-500/35 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-300">Email OK</span>
+                          ) : (
+                            <span className="text-[10px] uppercase tracking-wide text-muted">Email unverified</span>
+                          )}
+                        </div>
+
+                        {activeTab === "customer" && (
+                          <div className="flex gap-4 text-xs text-muted bg-white/5 p-2 rounded-lg w-fit">
+                            <span>Devices: <span className="text-white">{user.estimated_device_count ?? "—"}</span></span>
+                            <span>Assigned Analysts: <span className="text-white">
+                              {Object.values(bulkAssignments).filter(list => list.some(c => c.id === user.id)).length}
+                            </span></span>
+                          </div>
+                        )}
+
+                        {(activeTab === "analyst" || activeTab === "viewer") && (
+                          <div className="mt-2">
+                            <p className="text-[10px] uppercase tracking-[0.16em] text-muted mb-1.5">Assigned Customers ({userAssignments.length})</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {userAssignments.length > 0 ? userAssignments.map(c => (
+                                <span key={c.id} className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-white">
+                                  {c.company_name || c.username}
+                                </span>
+                              )) : (
+                                <span className="text-xs text-muted italic">No customers assigned</span>
+                              )}
+                            </div>
+                          </div>
                         )}
                       </div>
                     </div>
-                    <div className="flex flex-wrap gap-2">
+
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
                       <Button size="sm" variant="ghost" onClick={() => openViewModal(user)}>View</Button>
-                      <Button size="sm" variant="outline" onClick={() => openEditModal(user)}>Edit</Button>
-                      <Button size="sm" variant="outline" onClick={() => handleDeleteUser(user.id)}>Delete</Button>
+                      {canManageUsers ? <Button size="sm" variant="outline" onClick={() => openEditModal(user)}>Edit</Button> : null}
+                      {canManageUsers && (user.role === "analyst" || user.role === "viewer") ? (
+                        <Button size="sm" variant="outline" className="!border-brand/50 text-brand hover:!bg-brand/10" onClick={() => openAssignmentModal(user)}>Assign</Button>
+                      ) : null}
+                      {canManageUsers ? <Button size="sm" variant="outline" onClick={() => handleDeleteUser(user.id)}>Delete</Button> : null}
                     </div>
                   </div>
                 </div>
-              ))}
-              {!users.length ? <p className="text-sm text-muted">No users found.</p> : null}
-            </div>
+              );
+            })}
+            {!users.filter(u => u.role === activeTab).length ? <p className="text-sm text-muted p-4 text-center border border-dashed border-white/10 rounded-xl">No {activeTab}s found.</p> : null}
           </div>
-
-          <div className="my-5 h-px bg-white/10" />
         </div>
-
       </div>
 
       {isAddUserOpen ? (
@@ -410,11 +503,12 @@ export function AdminUsersPage() {
                 <span className="mb-2 block text-sm text-muted">Role</span>
                 <select
                   value={newRole}
-                  onChange={(event) => setNewRole(event.target.value as "admin" | "customer")}
+                  onChange={(event) => setNewRole(event.target.value as UserRole)}
                   className="w-full rounded-xl border border-white/15 bg-[#0c152d]/80 px-3 py-3 text-sm text-text outline-none transition focus:border-brand/70 focus:ring-2 focus:ring-brand/20"
                 >
-                  <option value="customer">customer</option>
-                  <option value="admin">admin</option>
+                  {ROLE_OPTIONS.map((role) => (
+                    <option key={role} value={role}>{role}</option>
+                  ))}
                 </select>
               </label>
               <label className="flex items-center gap-2 text-sm text-muted md:col-span-2">
@@ -620,11 +714,12 @@ export function AdminUsersPage() {
                   <span className="mb-2 block text-sm text-muted">Role</span>
                   <select
                     value={editRole}
-                    onChange={(event) => setEditRole(event.target.value as "admin" | "customer")}
+                    onChange={(event) => setEditRole(event.target.value as UserRole)}
                     className="w-full rounded-xl border border-white/15 bg-[#0c152d]/80 px-3 py-3 text-sm text-text outline-none transition focus:border-brand/70 focus:ring-2 focus:ring-brand/20"
                   >
-                    <option value="customer">customer</option>
-                    <option value="admin">admin</option>
+                    {ROLE_OPTIONS.map((role) => (
+                      <option key={role} value={role}>{role}</option>
+                    ))}
                   </select>
                 </label>
                 <label className="flex items-center gap-2 text-sm text-muted">
@@ -820,6 +915,90 @@ export function AdminUsersPage() {
                 ) : null}
                 <Button variant="ghost" size="sm" onClick={closeReview}>Cancel</Button>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isAssignmentModalOpen && assignmentUser ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-[#0c152d]/95 p-6 shadow-panel">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.16em] text-brand">Admin</p>
+                <h2 className="mt-2 text-xl font-semibold text-white">Assign Customers</h2>
+                <p className="mt-1 text-sm text-muted">Select customers for {assignmentUser.username} to access.</p>
+              </div>
+              <Button variant="ghost" size="sm" onClick={closeAssignmentModal}>Close</Button>
+            </div>
+
+            {assignmentLoading && !users.length ? (
+              <p className="mt-4 text-sm text-muted">Loading...</p>
+            ) : (() => {
+              const customerUsers = users.filter(u => u.role === "customer");
+              const filteredCustomers = customerUsers.filter(c => 
+                (c.company_name?.toLowerCase() || "").includes(assignmentSearch.toLowerCase()) || 
+                c.username.toLowerCase().includes(assignmentSearch.toLowerCase())
+              );
+              
+              const assigned = filteredCustomers.filter(c => assignedCustomerIds.includes(c.id));
+              const available = filteredCustomers.filter(c => !assignedCustomerIds.includes(c.id));
+
+              return (
+                <div className="mt-5 space-y-4">
+                  <InputField
+                    id="assign-search"
+                    label=""
+                    placeholder="Search customers..."
+                    value={assignmentSearch}
+                    onChange={setAssignmentSearch}
+                  />
+                  <div className="grid grid-cols-2 gap-4 h-[320px]">
+                    <div className="flex flex-col border border-white/10 rounded-xl bg-white/5 overflow-hidden">
+                      <div className="flex items-center justify-between p-3 border-b border-white/10 bg-white/5">
+                        <span className="text-[10px] uppercase text-muted tracking-widest">Available ({available.length})</span>
+                        <Button size="sm" variant="ghost" onClick={() => setAssignedCustomerIds(prev => [...prev, ...available.map(c => c.id)])}>Select All</Button>
+                      </div>
+                      <div className="flex-1 overflow-y-auto p-2 space-y-1 no-scrollbar">
+                        {available.map(c => (
+                          <div key={c.id} onClick={() => setAssignedCustomerIds(prev => [...prev, c.id])} className="p-2.5 text-sm text-white rounded-lg border border-transparent hover:border-white/10 hover:bg-white/10 cursor-pointer flex justify-between items-center group transition-all">
+                            <div className="flex flex-col">
+                              <span className="font-medium">{c.company_name || c.username}</span>
+                              <span className="text-xs text-muted">{c.email}</span>
+                            </div>
+                            <span className="text-brand opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-semibold uppercase tracking-widest">Add</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    
+                    <div className="flex flex-col border border-brand/20 rounded-xl bg-brand/5 overflow-hidden">
+                      <div className="flex items-center justify-between p-3 border-b border-brand/20 bg-brand/10">
+                        <span className="text-[10px] uppercase text-brand tracking-widest">Assigned ({assignedCustomerIds.length})</span>
+                        <Button size="sm" variant="ghost" className="!text-brand" onClick={() => setAssignedCustomerIds([])}>Clear All</Button>
+                      </div>
+                      <div className="flex-1 overflow-y-auto p-2 space-y-1 no-scrollbar">
+                        {assigned.map(c => (
+                          <div key={c.id} onClick={() => setAssignedCustomerIds(prev => prev.filter(id => id !== c.id))} className="p-2.5 text-sm text-white rounded-lg border border-transparent hover:border-rose-500/20 hover:bg-rose-500/10 cursor-pointer flex justify-between items-center group transition-all">
+                            <div className="flex flex-col">
+                              <span className="font-medium">{c.company_name || c.username}</span>
+                              <span className="text-xs text-muted group-hover:text-rose-200/70">{c.email}</span>
+                            </div>
+                            <span className="text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-semibold uppercase tracking-widest">Remove</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {assignmentError ? <p className="mt-3 text-sm text-danger">{assignmentError}</p> : null}
+
+            <div className="mt-5 flex flex-wrap gap-2">
+              <Button onClick={handleSaveAssignments} loading={assignmentLoading}>Save assignments</Button>
+              <Button variant="outline" onClick={closeAssignmentModal}>Cancel</Button>
             </div>
           </div>
         </div>

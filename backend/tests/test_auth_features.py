@@ -109,14 +109,14 @@ def test_login_pending_token_me_ok_devices_forbidden(client, db_session):
         json={"username": "pending@example.com", "password": "Password123"},
     )
     assert login_resp.status_code == 200
-    token = login_resp.json()["access_token"]
-    assert token
+    assert login_resp.json()["message"] == "Logged in"
+    assert "ics_access_token" in login_resp.cookies
 
-    me_resp = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    me_resp = client.get("/api/v1/auth/me")
     assert me_resp.status_code == 200
     assert me_resp.json()["onboarding_status"] == "pending"
 
-    dev_resp = client.get("/api/v1/devices/me", headers={"Authorization": f"Bearer {token}"})
+    dev_resp = client.get("/api/v1/devices/me")
     assert dev_resp.status_code == 403
     assert "pending" in dev_resp.json()["detail"].lower() or "review" in dev_resp.json()["detail"].lower()
 
@@ -130,9 +130,9 @@ def test_pending_user_cannot_hit_alerts_endpoint(client, db_session):
         "/api/v1/auth/login",
         json={"username": "pend2@example.com", "password": "Password123"},
     )
-    token = login_resp.json()["access_token"]
+    assert login_resp.json()["message"] == "Logged in"
     # No alerts in empty DB — route must still enforce onboarding before querying.
-    alerts = client.get("/api/v1/alerts", headers={"Authorization": f"Bearer {token}"})
+    alerts = client.get("/api/v1/alerts")
     assert alerts.status_code == 403
 
 
@@ -210,17 +210,15 @@ def test_email_verification(client, db_session):
     db_session.add(user)
     db_session.commit()
 
-    # Login to get access token
+    # Login sets the HttpOnly auth cookie used by subsequent authenticated requests.
     login_resp = client.post("/api/v1/auth/login", json={
         "username": "unverified@example.com",
         "password": "Password123"
     })
-    access_token = login_resp.json()["access_token"]
+    assert login_resp.json()["message"] == "Logged in"
     
     # Request verification email
-    req_resp = client.post("/api/v1/auth/request-email-verification", headers={
-        "Authorization": f"Bearer {access_token}"
-    })
+    req_resp = client.post("/api/v1/auth/request-email-verification")
     assert req_resp.status_code == 200
     token = req_resp.json()["token"]
     

@@ -22,6 +22,7 @@ class Device(Base):
     last_ml_risk_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     last_ml_status: Mapped[str | None] = mapped_column(String(24), nullable=True)
     monitoring_status: Mapped[str] = mapped_column(String(24), nullable=False, default="offline")
+    operational_state: Mapped[str] = mapped_column(String(24), nullable=False, default="unknown")
     last_traffic_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_seen_traffic_id: Mapped[int | None] = mapped_column(
         ForeignKey("traffic_records.id", ondelete="SET NULL"),

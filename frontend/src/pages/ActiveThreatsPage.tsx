@@ -1,18 +1,35 @@
 import { useEffect, useState } from "react";
 
 import { fetchActiveThreats, type ActiveThreat } from "../api/phase2Api";
+import { useTenant } from "../contexts/TenantContext";
 
 export function ActiveThreatsPage() {
   const [threats, setThreats] = useState<ActiveThreat[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const { activeTenantId, canSelectTenant, assignedCustomers, isLoadingAssignments } = useTenant();
+  const tenantId = canSelectTenant ? activeTenantId : undefined;
 
   useEffect(() => {
     let active = true;
 
+    if (canSelectTenant && isLoadingAssignments) {
+      return () => {
+        active = false;
+      };
+    }
+
+    if (canSelectTenant && assignedCustomers.length === 0) {
+      setError("No customer tenants assigned. Contact an administrator.");
+      setLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
     const load = async () => {
       try {
-        const rows = await fetchActiveThreats();
+        const rows = await fetchActiveThreats(tenantId);
         if (!active) return;
         setThreats(rows);
         setError("");
@@ -35,7 +52,7 @@ export function ActiveThreatsPage() {
       active = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
 
   return (
     <section className="rounded-3xl border border-white/10 bg-panel/45 p-6 shadow-panel">

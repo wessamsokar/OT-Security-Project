@@ -1,4 +1,6 @@
 from datetime import datetime
+import os
+import secrets
 
 from app.core.security import get_password_hash
 from app.db.session import SessionLocal
@@ -8,6 +10,8 @@ from app.models.user import OnboardingStatus, User, UserRole
 
 
 def main() -> None:
+    admin_password = os.environ.get("SEED_ADMIN_PASSWORD") or secrets.token_urlsafe(16)
+    customer_password = os.environ.get("SEED_CUSTOMER_PASSWORD") or secrets.token_urlsafe(16)
     db = SessionLocal()
     try:
         admin_user = db.query(User).filter(User.username == "admin").first()
@@ -17,7 +21,7 @@ def main() -> None:
                     User(
                         username="admin",
                         email="admin@ics.local",
-                        hashed_password=get_password_hash("admin123"),
+                        hashed_password=get_password_hash(admin_password),
                         role=UserRole.admin,
                         is_admin_approved=True,
                         admin_approved_at=datetime.utcnow(),
@@ -26,7 +30,7 @@ def main() -> None:
                     User(
                         username="customer",
                         email="customer@ics.local",
-                        hashed_password=get_password_hash("customer123"),
+                        hashed_password=get_password_hash(customer_password),
                         role=UserRole.customer,
                         is_admin_approved=True,
                         admin_approved_at=datetime.utcnow(),
@@ -75,7 +79,17 @@ def main() -> None:
             )
 
         db.commit()
-        print("Seed complete")
+        print("Seed complete (development data only)")
+        print("Seed admin login username: admin")
+        if "SEED_ADMIN_PASSWORD" in os.environ:
+            print("Seed admin password: taken from SEED_ADMIN_PASSWORD (not printed)")
+        else:
+            print(f"Seed admin one-time password (save now): {admin_password}")
+        if db.query(User).filter(User.username == "customer").first():
+            if "SEED_CUSTOMER_PASSWORD" in os.environ:
+                print("Seed customer password: taken from SEED_CUSTOMER_PASSWORD (not printed)")
+            else:
+                print(f"Seed customer one-time password (save now): {customer_password}")
     finally:
         db.close()
 

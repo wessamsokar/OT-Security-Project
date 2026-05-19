@@ -107,11 +107,57 @@ export type InventoryEdge = {
   packet_count: number;
 };
 
-export async function fetchInventoryEdges(hours = 168): Promise<InventoryEdge[]> {
+export type ProtocolVisibilityRow = {
+  protocol: string;
+  packets: number;
+  last_seen_at: string | null;
+};
+
+export type ProtocolVisibilityResponse = {
+  window_hours: number;
+  total_packets: number;
+  protocols: ProtocolVisibilityRow[];
+};
+
+export type TelemetryHealthResponse = {
+  window_minutes: number;
+  packets_last_minute: number;
+  packets_last_5min: number;
+  packets_last_15min: number;
+  avg_packets_per_minute_15m: number;
+  last_traffic_at: string | null;
+  dropped_packets: number | null;
+};
+
+export async function fetchInventoryEdges(hours = 168, tenantId?: number): Promise<InventoryEdge[]> {
   try {
-    const response = await apiClient.get<InventoryEdge[]>("/v1/traffic/inventory-edges", { params: { hours } });
+    const params: Record<string, unknown> = { hours };
+    if (tenantId) params.tenant_id = tenantId;
+    const response = await apiClient.get<InventoryEdge[]>("/v1/traffic/inventory-edges", { params });
     return response.data;
   } catch (error) {
     throw parseTrafficApiError(error, "Unable to load inventory flow edges.");
+  }
+}
+
+export async function fetchProtocolVisibility(tenantId?: number): Promise<ProtocolVisibilityResponse> {
+  try {
+    const response = await apiClient.get<ProtocolVisibilityResponse>("/v1/traffic/protocol-distribution", {
+      params: tenantId ? { tenant_id: tenantId } : undefined
+    });
+    return response.data;
+  } catch (error) {
+    throw parseTrafficApiError(error, "Unable to load protocol visibility.");
+  }
+}
+
+export async function fetchTelemetryHealth(tenantId?: number): Promise<TelemetryHealthResponse> {
+  try {
+    const response = await apiClient.get<TelemetryHealthResponse>("/v1/traffic/health", {
+      params: tenantId ? { tenant_id: tenantId } : undefined
+    });
+    return response.data;
+  } catch (error) {
+    throw parseTrafficApiError(error, "Unable to load telemetry health.");
   }
 }

@@ -16,6 +16,7 @@ from app.main import app
 from app.models.user import User, UserRole
 from app.models.rbac import Role
 from app.db.session import get_db
+from tests.test_credentials import test_password
 
 engine = create_engine("sqlite:///./test_db.sqlite", connect_args={"check_same_thread": False})
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -52,7 +53,12 @@ def clean_db(db_session):
 
 @pytest.fixture
 def admin_token(db_session):
-    admin = User(username="admin", email="admin@example.com", hashed_password="123", role=UserRole.admin)
+    admin = User(
+        username="admin",
+        email="admin@example.com",
+        hashed_password=get_password_hash(test_password()),
+        role=UserRole.admin,
+    )
     db_session.add(admin)
     db_session.commit()
     db_session.refresh(admin)
@@ -63,7 +69,7 @@ def viewer_token(db_session):
     viewer = User(
         username="viewer",
         email="viewer@example.com",
-        hashed_password="123",
+        hashed_password=get_password_hash(test_password()),
         role=UserRole.viewer,
         is_admin_approved=True,
     )

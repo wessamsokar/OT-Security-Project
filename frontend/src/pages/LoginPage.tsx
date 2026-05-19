@@ -5,10 +5,11 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { forgotPassword, loginUser, resetPassword, verifyEmail } from "../api/authApi";
 import { Button } from "../components/ui/Button";
 import { InputField } from "../components/ui/InputField";
-import { saveAuthSession } from "../lib/authSession";
+import { useAuth } from "../contexts/AuthContext";
 import { AuthLayout } from "../layouts/AuthLayout";
 
 export function LoginPage() {
+  const { refresh } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
@@ -81,8 +82,8 @@ export function LoginPage() {
 
     setIsSubmitting(true);
     try {
-      const auth = await loginUser({ email, password });
-      saveAuthSession(auth);
+      await loginUser({ email, password });
+      await refresh();
       navigate("/dashboard");
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "Unable to login right now.");
