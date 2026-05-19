@@ -2,6 +2,23 @@
 
 The platform uses a hybrid RBAC model with a primary role on `users.role` and optional many-to-many role assignments via `user_roles`.
 
+---
+
+## RBAC Resolution Flow
+
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+flowchart TD
+	User[User] --> Primary[users.role]
+	User --> Extra[user_roles]
+	Primary --> Map[Static Role Map]
+	Primary --> DbRole[roles + role_permissions]
+	Extra --> DbRole
+	Map --> Perms[Effective Permissions]
+	DbRole --> Perms
+	Admin[admin role] -->|Bypass| Perms
+```
+
 ## Data Model
 
 - `users.role`: primary role (admin, customer, analyst, viewer).
@@ -18,6 +35,24 @@ The platform uses a hybrid RBAC model with a primary role on `users.role` and op
 4. Extra roles from `user_roles` are merged.
 
 This ensures the system works even if role permissions have not been seeded yet.
+
+---
+
+## Permission Enforcement
+
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+sequenceDiagram
+	autonumber
+	participant Client
+	participant API as FastAPI
+	participant RBAC as require_permission
+
+	Client->>API: Request /api/v1/*
+	API->>RBAC: Resolve permissions
+	RBAC-->>API: Allow or deny
+	API-->>Client: 2xx or 403
+```
 
 ## System Roles
 
@@ -48,6 +83,15 @@ Role counts and role-user listings are resolved from both:
 - Customer self-registration creates `onboarding_status=pending`.
 - Admin approval endpoints move customers to approved and set `is_admin_approved=true`.
 - Analyst/Viewer/Admin bypass customer approval gates.
+
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+flowchart LR
+	Register[Self-register customer] --> Pending[onboarding_status = pending]
+	Pending -->|Admin approve| Approved[onboarding_status = approved]
+	Pending -->|Admin reject| Rejected[onboarding_status = rejected]
+	Approved --> Login[Allowed to login]
+```
 
 ## Assignment Endpoints
 

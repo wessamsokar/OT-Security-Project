@@ -2,6 +2,37 @@
 
 Topology is a persisted graph of device relationships derived from telemetry, metadata, and manual edits. It powers both the REST snapshot and the SSE topology stream.
 
+---
+
+## Topology Data Model
+
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+erDiagram
+	USERS ||--o{ DEVICES : owns
+	USERS ||--o{ TOPOLOGY_EDGES : scopes
+	DEVICES ||--o{ TOPOLOGY_EDGES : source
+	DEVICES ||--o{ TOPOLOGY_EDGES : target
+	USERS ||--o{ TRAFFIC_RECORDS : owns
+	DEVICES ||--o{ TRAFFIC_RECORDS : links
+
+	TOPOLOGY_EDGES {
+		int id
+		int user_id
+		int source_device_id
+		int target_device_id
+		string relationship_type
+		string direction
+		string protocol_context
+		int packet_count
+		int bytes_total
+		bool is_active
+		string edge_source
+		datetime first_seen_at
+		datetime last_seen_at
+	}
+```
+
 ## Data Model
 
 `topology_edges` fields include:
@@ -49,6 +80,42 @@ Priority order:
 5. online
 6. unknown
 
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+flowchart TD
+	Start[Device status input] --> Inactive{is_active?}
+	Inactive -->|false| StateInactive[inactive]
+	Inactive -->|true| Attack{monitoring_status}
+	Attack -->|under_attack| StateAnom[anomalous]
+	Attack -->|suspicious| StateDegraded[degraded]
+	Attack -->|active/other| Traffic{last_traffic_at stale?}
+	Traffic -->|stale| StateOffline[offline]
+	Traffic -->|fresh| Online{packet_capture_enabled?}
+	Online -->|true| StateCapture[capture_enabled]
+	Online -->|false| StateOnline[online]
+```
+
+---
+
+## Live Topology Sync
+
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+sequenceDiagram
+	autonumber
+	participant Ingest as /traffic/ingest
+	participant Topo as topology service
+	participant DB as Postgres
+	participant Stream as /stream/topology
+	participant UI as React Flow
+
+	Ingest->>DB: Insert traffic_records
+	Ingest->>Topo: sync_edge_from_traffic_record
+	Topo->>DB: Upsert topology_edges
+	Stream->>DB: build_topology_snapshot
+	Stream-->>UI: topology_batch
+```
+
 ## Live Topology SSE
 
 - `GET /api/v1/stream/topology`
@@ -61,3 +128,13 @@ Priority order:
 - Nodes are arranged in a grid layout with status-based styling.
 - Edges animate when active traffic is present.
 - MiniMap colors reflect operational state (online, degraded, anomalous, offline).
+
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+flowchart LR
+	Snapshot[TopologySnapshot] --> Adapter[topologyAdapter]
+	Adapter --> Nodes[React Flow Nodes]
+	Adapter --> Edges[React Flow Edges]
+	Edges --> Anim[Animated edge activity]
+	Nodes --> Styles[Status-based node styles]
+```

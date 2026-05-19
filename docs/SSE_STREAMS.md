@@ -2,6 +2,20 @@
 
 The platform uses Server-Sent Events (EventSource) for live updates. Streams are authenticated via cookies and tenant-scoped.
 
+---
+
+## SSE Architecture
+
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+flowchart LR
+  Browser[EventSource client] --> GW[Nginx Gateway]
+  GW --> API[FastAPI Stream]
+  API --> DB[(Postgres Snapshot Reads)]
+  API --> Browser
+  API -.-> Limits[SSE limits + interval]
+```
+
 ## Endpoints
 
 - `GET /api/v1/stream/alerts`
@@ -35,3 +49,19 @@ Gateway disables buffering on `/api/v1/stream/*` and keeps connections open.
 - EventSource with `withCredentials=true`.
 - Connection timeout and exponential backoff.
 - Optional visibility-aware pause/resume when tab is hidden.
+
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+sequenceDiagram
+  autonumber
+  participant UI
+  participant GW
+  participant API
+
+  UI->>GW: EventSource connect
+  GW->>API: Proxy stream
+  API-->>UI: event payload
+  Note over UI: Timeout guard starts
+  UI-->>UI: On error -> backoff
+  UI->>GW: Reconnect after backoff
+```

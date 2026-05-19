@@ -20,17 +20,59 @@ The platform ingests OT network flows, runs ML-assisted detection, persists aler
 
 ## Architecture Summary
 
-```
-Browser (React SPA)
-  -> Gateway (Nginx, SSE proxy)
-    -> Backend (FastAPI)
-      -> PostgreSQL (primary data)
-      -> Redis (Celery broker/result backend)
-      -> ML Service (internal HTTP)
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+flowchart LR
+  subgraph Browser
+    UI[Browser SOC UI]
+    SPA[React SPA + React Flow]
+    UI --> SPA
+  end
 
-Backend Worker (Celery)
-  -> ML Service (retrain)
+  subgraph Edge
+    GW[Nginx Gateway]
+  end
+
+  subgraph Backend
+    API[FastAPI Backend]
+    RBAC[RBAC + Tenant Guards]
+    SSE[Stream Endpoints]
+    API --> RBAC
+    API --> SSE
+  end
+
+  subgraph Data
+    PG[(PostgreSQL)]
+    REDIS[(Redis)]
+  end
+
+  subgraph Async
+    WORKER[Celery Worker]
+  end
+
+  subgraph ML
+    MLSVC[ML Service]
+  end
+
+  SPA -->|HTTPS /api| GW --> API
+  SPA -->|EventSource /api/v1/stream| GW --> SSE
+  API --> PG
+  API --> REDIS
+  API -->|/infer| MLSVC
+  WORKER --> REDIS
+  WORKER -->|/retrain| MLSVC
+  WORKER --> PG
 ```
+
+---
+
+## Request Lifecycle (High-Level)
+
+1. Browser initializes auth bootstrap and tenant scope.
+2. Gateway proxies API and SSE requests.
+3. Backend enforces RBAC and tenant scoping.
+4. Telemetry and topology updates persist to Postgres.
+5. SSE streams emit periodic snapshots to the UI.
 
 ### Backend Stack
 
@@ -58,6 +100,29 @@ Backend Worker (Celery)
 - Admins bypass permission checks but still remain tenant-aware when requested.
 - Gateway blocks direct access to ML service routes.
 
+---
+
+## Authentication and Session Bootstrap
+
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+sequenceDiagram
+  autonumber
+  participant Browser
+  participant API as FastAPI
+
+  Browser->>API: GET /api/v1/auth/csrf
+  API-->>Browser: Set ics_csrf_token cookie + token body
+  Browser->>API: POST /api/v1/auth/login (X-CSRF-Token)
+  API-->>Browser: Set ics_access_token HttpOnly cookie
+  Browser->>API: GET /api/v1/auth/me
+  API-->>Browser: user + permissions
+  Browser->>API: GET /api/v1/users/{id}/customers (analyst/viewer)
+  API-->>Browser: assigned customer tenants
+  Note over Browser,API: AuthContext refreshes /auth/me on background refresh
+  Note over Browser: If refresh fails, UI shows recovery screen
+```
+
 ## Multi-Tenant RBAC Model
 
 - Users have a primary `users.role` (admin/customer/analyst/viewer).
@@ -69,6 +134,16 @@ See docs:
 
 - docs/RBAC.md
 - docs/MULTI_TENANCY.md
+
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+flowchart TB
+  Admin[Admin] -->|Global access| AllTenants[All tenants]
+  Admin -->|Tenant filter| TenantScoped[Single tenant]
+  Customer[Customer] -->|Self-scope| OwnTenant[Own tenant]
+  Analyst[Analyst] -->|Assigned customers| Assigned[Assigned tenant list]
+  Viewer[Viewer] -->|Assigned customers| Assigned
+```
 
 ## Live Telemetry + Topology
 
@@ -87,6 +162,16 @@ See docs:
 
 - docs/TOPOLOGY.md
 
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+flowchart LR
+  Ingest[POST /traffic/ingest] --> Record[(traffic_records)]
+  Record --> TopoSync[sync_edge_from_traffic_record]
+  TopoSync --> Edges[(topology_edges)]
+  Record --> DeviceLink[Device state + last_traffic_at]
+  DeviceLink --> Devices[(devices)]
+```
+
 ## SSE Architecture
 
 Endpoints:
@@ -100,12 +185,54 @@ See docs:
 
 - docs/SSE_STREAMS.md
 
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+sequenceDiagram
+  autonumber
+  participant Browser
+  participant GW as Nginx
+  participant API as FastAPI
+  participant DB as Postgres
+
+  Browser->>GW: EventSource /api/v1/stream/alerts
+  GW->>API: Proxy stream (no buffering)
+  loop every SSE_INTERVAL_SECONDS
+    API->>DB: Snapshot queries (alerts, dashboard, models)
+    API-->>Browser: event: snapshot
+  end
+  Note over Browser: Client backoff + reconnect on error
+```
+
 ## ML Pipeline Overview
 
 - Backend sends normalized telemetry to the ML service `/infer` endpoint.
 - ML service responds with risk score, status, confidence, and alert metadata.
 - Detection results update `traffic_records`, `alerts`, and device state.
 - Retraining runs via Celery (`/api/v1/model/retrain`).
+
+---
+
+## Detection Pipeline
+
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+sequenceDiagram
+  autonumber
+  participant UI
+  participant API
+  participant DB
+  participant ML
+  participant SSE
+
+  UI->>API: POST /api/v1/traffic/ingest
+  API->>DB: Insert traffic_records
+  API->>DB: Update devices + topology_edges
+  UI->>API: POST /api/v1/traffic/{id}/detect
+  API->>ML: POST /infer (X-ML-Internal-Key)
+  ML-->>API: Verdict (risk, status, confidence)
+  API->>DB: Update traffic_records + alerts + device state
+  SSE-->>UI: Next snapshot includes new alerts/topology
+```
 
 ## Folder Structure
 
