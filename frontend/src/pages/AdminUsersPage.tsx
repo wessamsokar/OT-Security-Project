@@ -109,7 +109,8 @@ export function AdminUsersPage() {
     setBulkAssignments(assignmentsRes.assignments);
   };
 
-  function onboardingBadgeClass(status: UserAdminResponse["onboarding_status"]): string {
+  function onboardingBadgeClass(status: UserAdminResponse["onboarding_status"], isVerified: boolean): string {
+    if (!isVerified) return "rounded-md border border-slate-500/40 bg-slate-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300";
     if (status === "approved") return "rounded-md border border-emerald-500/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300";
     if (status === "rejected") return "rounded-md border border-red-500/45 bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-300";
     return "rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300";
@@ -385,7 +386,7 @@ export function AdminUsersPage() {
                 <div key={user.id} className="group rounded-xl border border-white/5 bg-white/[0.02] p-4 transition-colors duration-300 hover:bg-white/[0.04]">
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div className="flex gap-4">
-                      {canApproveUsers ? (
+                      {canApproveUsers && user.is_email_verified && user.onboarding_status === "pending" ? (
                         <Button
                           size="sm"
                           variant="outline"
@@ -405,14 +406,12 @@ export function AdminUsersPage() {
                         <p className="text-xs text-muted mb-2">{user.email}</p>
                         
                         <div className="flex flex-wrap items-center gap-2 mb-3">
-                          <span className={onboardingBadgeClass(user.onboarding_status)}>
-                            {user.onboarding_status === "pending" ? "Pending verification" : user.onboarding_status === "approved" ? "Approved" : "Rejected"}
+                          <span className={onboardingBadgeClass(user.onboarding_status, user.is_email_verified)}>
+                            {!user.is_email_verified ? "Email unverified" : user.onboarding_status === "pending" ? "Pending admin approval" : user.onboarding_status === "approved" ? "Approved" : "Rejected"}
                           </span>
                           {user.is_email_verified ? (
                             <span className="rounded-md border border-sky-500/35 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-300">Email OK</span>
-                          ) : (
-                            <span className="text-[10px] uppercase tracking-wide text-muted">Email unverified</span>
-                          )}
+                          ) : null}
                         </div>
 
                         {activeTab === "customer" && (
@@ -778,19 +777,21 @@ export function AdminUsersPage() {
 
             <div className="mt-5 space-y-4">
               <div className="flex flex-wrap items-center gap-2">
-                <span className={onboardingBadgeClass(reviewUser.onboarding_status)}>
-                  {reviewUser.onboarding_status === "pending"
-                    ? "Pending verification"
-                    : reviewUser.onboarding_status === "approved"
-                      ? "Approved"
-                      : "Rejected"}
+                <span className={onboardingBadgeClass(reviewUser.onboarding_status, reviewUser.is_email_verified)}>
+                  {!reviewUser.is_email_verified
+                    ? "Email unverified"
+                    : reviewUser.onboarding_status === "pending"
+                      ? "Pending admin approval"
+                      : reviewUser.onboarding_status === "approved"
+                        ? "Approved"
+                        : "Rejected"}
                 </span>
                 {reviewUser.is_email_verified ? (
                   <span className="rounded-md border border-sky-500/35 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-sky-300">
                     Email verified
                   </span>
                 ) : (
-                  <span className="text-xs text-amber-300/90">Work email not verified by admin</span>
+                  <span className="text-xs text-amber-300/90">Work email not verified</span>
                 )}
               </div>
 

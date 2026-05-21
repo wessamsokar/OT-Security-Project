@@ -11,7 +11,9 @@ export type OperationalState =
   | "inactive"
   | "anomalous"
   | "degraded"
-  | "capture_enabled";
+  | "capture_enabled"
+  | "recovering"
+  | "acknowledged";
 
 export type TopologyState = {
   devices: DeviceResponse[];

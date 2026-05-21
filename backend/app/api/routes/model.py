@@ -55,7 +55,7 @@ def security_posture(
     blocked_query = (
         db.query(func.count(func.distinct(TrafficRecord.source_ip)))
         .join(Alert, Alert.traffic_record_id == TrafficRecord.id)
-        .filter(Alert.severity.in_([AlertSeverity.high, AlertSeverity.critical]))
+        .filter(Alert.severity.in_([AlertSeverity.high, AlertSeverity.critical, AlertSeverity.medium]))
         .filter(Alert.created_at >= since)
     )
     incidents_query = db.query(func.count(Incident.id)).filter(Incident.status != IncidentStatus.resolved)

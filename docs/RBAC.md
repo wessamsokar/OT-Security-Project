@@ -80,17 +80,20 @@ Role counts and role-user listings are resolved from both:
 
 ## Approval Flow
 
-- Customer self-registration creates `onboarding_status=pending`.
-- Admin approval endpoints move customers to approved and set `is_admin_approved=true`.
-- Analyst/Viewer/Admin bypass customer approval gates.
+- Self-registration creates `onboarding_status=pending` and `is_email_verified=false`.
+- User must verify their email before they enter the admin approval queue (or auto-approve).
+- Analyst/Viewer roles are auto-approved upon email verification.
+- Customer roles remain pending after verification until an Admin approves them.
 
 ```mermaid
 %%{init: {'theme': 'dark'}}%%
 flowchart LR
-	Register[Self-register customer] --> Pending[onboarding_status = pending]
-	Pending -->|Admin approve| Approved[onboarding_status = approved]
-	Pending -->|Admin reject| Rejected[onboarding_status = rejected]
-	Approved --> Login[Allowed to login]
+	Register[Self-register] --> Verify[Verify Email]
+	Verify -->|Customer| Pending[Admin Approval Queue]
+	Verify -->|Analyst/Viewer| Auto[Auto-Approved]
+	Pending -->|Approve| Approved[Access Granted]
+	Pending -->|Reject| Rejected[Access Denied]
+	Auto --> Approved
 ```
 
 ## Assignment Endpoints

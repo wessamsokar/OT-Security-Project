@@ -1,7 +1,22 @@
-"""SOC health aggregates derived only from persisted ML and alert fields."""
+"""
+SOC health aggregates derived only from persisted ML and alert fields.
+
+Metric definitions
+------------------
+  traffic_flows_in_window : COUNT of TrafficRecord rows in the rolling window.
+                            This is a FLOW count (telemetry records), not a packet count.
+                            It is consistent with flows_last_24h in dashboard_summary.
+
+  traffic_attack_detected_count : COUNT of TrafficRecord rows where ML flagged an attack.
+                                  Subset of traffic_flows_in_window.
+
+  alerts_severity_counts  : COUNT of Alert rows grouped by severity.
+                            Separate from flow counts — one flow may produce ≤ 1 alert.
+"""
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func
@@ -14,22 +29,42 @@ from app.models.user import User, UserRole
 from app.schemas.model import SocHealthResponse
 from app.services.tenant import get_accessible_tenant_ids
 
+logger = logging.getLogger(__name__)
 
-def build_soc_health(db: Session, current_user: User, *, window_hours: int = 24, requested_tenant_id: int | None = None) -> SocHealthResponse:
+
+def build_soc_health(
+    db: Session,
+    current_user: User,
+    *,
+    window_hours: int = 24,
+    requested_tenant_id: int | None = None,
+) -> SocHealthResponse:
+    """
+    Build SOC health metrics for the given rolling window.
+
+    All counts here use the SAME window (since=now-window_hours) to ensure
+    consistency between traffic_flows_in_window and other metrics.
+
+    flows_in_window = COUNT(TrafficRecord rows) in window
+    This MUST match dashboard_summary.flows_last_24h when window_hours=24.
+    """
     since = datetime.now(timezone.utc) - timedelta(hours=max(1, window_hours))
+    # Use naive UTC to match TrafficRecord.created_at storage
+    since_naive = since.replace(tzinfo=None)
 
-    traffic_base = db.query(TrafficRecord).filter(TrafficRecord.created_at >= since)
+    traffic_base = db.query(TrafficRecord).filter(TrafficRecord.created_at >= since_naive)
     alert_base = db.query(Alert).join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id).filter(
-        Alert.created_at >= since
+        Alert.created_at >= since_naive
     )
     device_base = db.query(Device)
 
     tenant_ids = get_accessible_tenant_ids(db, current_user, requested_tenant_id)
     if tenant_ids is not None:
         traffic_base = traffic_base.filter(TrafficRecord.user_id.in_(tenant_ids))
-        alert_base = alert_base.filter(TrafficRecord.user_id.in_(tenant_ids))
-        device_base = device_base.filter(Device.user_id.in_(tenant_ids))
+        alert_base   = alert_base.filter(TrafficRecord.user_id.in_(tenant_ids))
+        device_base  = device_base.filter(Device.user_id.in_(tenant_ids))
 
+    # Flow count — COUNT of TrafficRecord rows (NOT packet count)
     flows_in_window = traffic_base.with_entities(func.count(TrafficRecord.id)).scalar() or 0
 
     ml_label = func.coalesce(TrafficRecord.ml_status, "(no_ml_output)")
@@ -63,6 +98,18 @@ def build_soc_health(db: Session, current_user: User, *, window_hours: int = 24,
         .scalar()
     )
     avg_last_ml_risk = float(avg_risk) if avg_risk is not None else None
+
+    # Debug log — verify consistency with dashboard_summary
+    logger.debug(
+        "[soc_health] endpoint=/model/soc-health tenant_ids=%s window_hours=%d "
+        "flows_in_window=%d attack_detected=%d alerts=%s devices=%d",
+        tenant_ids,
+        window_hours,
+        flows_in_window,
+        attack_rows,
+        alerts_severity_counts,
+        devices_registered,
+    )
 
     return SocHealthResponse(
         window_hours=window_hours,

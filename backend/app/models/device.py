@@ -25,11 +25,22 @@ class Device(Base):
     operational_state: Mapped[str] = mapped_column(String(24), nullable=False, default="unknown")
     last_traffic_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_seen_traffic_id: Mapped[int | None] = mapped_column(
-        ForeignKey("traffic_records.id", ondelete="SET NULL"),
+        ForeignKey("traffic_records.id", use_alter=True, ondelete="SET NULL"),
         nullable=True,
     )
+    last_attack_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_recovered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    attack_acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    attack_resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    anomaly_score_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     owner = relationship("User", back_populates="devices")
+
+    @property
+    def tenant_name(self) -> str | None:
+        if self.owner:
+            return self.owner.company_name or self.owner.username
+        return None

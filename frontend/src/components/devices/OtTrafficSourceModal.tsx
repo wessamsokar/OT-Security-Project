@@ -17,6 +17,8 @@ import {
 } from "./otAssetOptions";
 import type { OtTrafficSourceFormValues } from "./otAssetMetadata";
 import type { DeviceResponse } from "../../api/devicesApi";
+import { useAuth } from "../../contexts/AuthContext";
+import { useTenant } from "../../contexts/TenantContext";
 
 const SELECT_ROW =
   "w-full rounded-xl border border-white/15 bg-[#0c152d]/80 px-2.5 py-2 text-sm text-text outline-none transition focus:border-brand/70 focus:ring-2 focus:ring-brand/20";
@@ -102,8 +104,15 @@ function GlowToggle({
 }
 
 export type DeviceMlSnapshot = {
+  id: number;
   last_ml_risk_score: number | null;
   last_ml_status: string | null;
+  last_attack_at: string | null;
+  last_recovered_at: string | null;
+  attack_acknowledged_at: string | null;
+  attack_resolved_at: string | null;
+  monitoring_status: string | null;
+  operational_state: string | null;
 };
 
 function formatMlStatusLabel(raw: string | null | undefined): string {
@@ -128,6 +137,10 @@ type Props = {
   onEdgesChanged?: () => void;
   /** Exposes the RelationshipPanel imperative ref to the parent (needed for create-mode flush). */
   onPanelRef?: (ref: RelationshipPanelRef) => void;
+  /** Called when user clicks "Clear Attack" to reset operational state. */
+  onClearAttack?: (id: number) => void;
+  /** Called when user clicks "Acknowledge" to mark the alert as seen. */
+  onAcknowledgeAttack?: (id: number) => void;
 };
 
 export function OtTrafficSourceModal({
@@ -143,8 +156,14 @@ export function OtTrafficSourceModal({
   onSubmit,
   onClose,
   onEdgesChanged,
-  onPanelRef
+  onPanelRef,
+  onClearAttack,
+  onAcknowledgeAttack
 }: Props) {
+  const { hasPermission } = useAuth();
+  const { assignedCustomers } = useTenant();
+  const isAdmin = hasPermission("manage_users");
+  
   const [showAdvanced, setShowAdvanced] = useState(false);
   const protocolTouchedRef = useRef(false);
   const monitoringModeTouchedRef = useRef(false);
@@ -221,6 +240,30 @@ export function OtTrafficSourceModal({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-5 [scrollbar-gutter:stable]">
           <div className="space-y-4">
+            {isAdmin ? (
+              <div className="space-y-4 rounded-2xl border border-brand/20 bg-brand/5 p-4 shadow-inner shadow-black/20">
+                <SectionHeader icon={Shield} title="Customer Environment" subtitle="Admin requirement: Assign to a customer." />
+                <div>
+                  <label htmlFor="ot-customer" className="block min-w-0">
+                    <span className="mb-1 block text-xs text-brand sm:text-sm">Customer *</span>
+                    <select
+                      id="ot-customer"
+                      className={`${SELECT_ROW} border-brand/30`}
+                      value={form.customerId ?? ""}
+                      onChange={(e) => setForm((p) => ({ ...p, customerId: e.target.value ? Number(e.target.value) : undefined }))}
+                    >
+                      <option value="">Select a customer...</option>
+                      {assignedCustomers.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.company_name || c.username}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </div>
+            ) : null}
+
             <div className="space-y-4 rounded-2xl border border-white/10 bg-[#0c152d]/35 p-4 shadow-inner shadow-black/20">
               <SectionHeader icon={Cpu} title="Quick add device" subtitle="Required fields only." />
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -467,22 +510,88 @@ export function OtTrafficSourceModal({
                       </div>
                       {isEditing ? (
                         <div className="rounded-xl border border-white/12 bg-white/[0.03] px-3 py-3 text-[11px] text-muted">
-                          <p className="mb-1 text-xs font-medium text-white">ML status</p>
+                          <div className="mb-2 flex items-center justify-between">
+                            <p className="text-xs font-medium text-white">Operational Timeline</p>
+                            <div className="flex gap-2">
+                              {mlSnapshot && mlSnapshot.monitoring_status && ["under_attack", "suspicious"].includes(mlSnapshot.monitoring_status) && !mlSnapshot.attack_acknowledged_at ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-6 border-amber-500/50 px-2 py-0 text-[10px] text-amber-200 hover:bg-amber-500/20"
+                                  onClick={() => {
+                                    if (onAcknowledgeAttack && mlSnapshot.id) onAcknowledgeAttack(mlSnapshot.id);
+                                  }}
+                                >
+                                  Acknowledge
+                                </Button>
+                              ) : null}
+                              {mlSnapshot && mlSnapshot.monitoring_status && ["under_attack", "suspicious", "active"].includes(mlSnapshot.monitoring_status) && mlSnapshot.operational_state !== "online" ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-6 border-rose-500/50 px-2 py-0 text-[10px] text-rose-200 hover:bg-rose-500/20"
+                                  onClick={() => {
+                                    if (onClearAttack && mlSnapshot.id) onClearAttack(mlSnapshot.id);
+                                  }}
+                                >
+                                  Resolve
+                                </Button>
+                              ) : null}
+                            </div>
+                          </div>
                           {mlSnapshot && (mlSnapshot.last_ml_risk_score != null || mlSnapshot.last_ml_status) ? (
-                            <div className="flex flex-wrap items-end justify-between gap-3">
-                              <div>
-                                <p className="text-[10px] uppercase tracking-wide text-muted">Risk</p>
-                                <p className="text-lg font-semibold text-brand">
-                                  {mlSnapshot.last_ml_risk_score != null
-                                    ? `${(mlSnapshot.last_ml_risk_score * 100).toFixed(1)}%`
-                                    : "—"}
-                                </p>
+                            <div className="flex flex-col gap-3">
+                              <div className="flex flex-wrap items-end justify-between gap-3">
+                                <div>
+                                  <p className="text-[10px] uppercase tracking-wide text-muted">Risk</p>
+                                  <p className="text-lg font-semibold text-brand">
+                                    {mlSnapshot.last_ml_risk_score != null
+                                      ? `${(mlSnapshot.last_ml_risk_score * 100).toFixed(1)}%`
+                                      : "—"}
+                                  </p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-[10px] uppercase tracking-wide text-muted">Status</p>
+                                  <p className="font-medium capitalize text-text">
+                                    {formatMlStatusLabel(mlSnapshot.last_ml_status)}
+                                  </p>
+                                </div>
                               </div>
-                              <div className="text-right">
-                                <p className="text-[10px] uppercase tracking-wide text-muted">Status</p>
-                                <p className="font-medium capitalize text-text">
-                                  {formatMlStatusLabel(mlSnapshot.last_ml_status)}
-                                </p>
+                              <div className="flex flex-col gap-1 border-t border-white/10 pt-2 text-[10px]">
+                                {mlSnapshot.last_attack_at && (
+                                  <div className="flex justify-between items-center">
+                                    <div className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-rose-500"></span><span className="text-muted">Attack detected</span></div>
+                                    <span className="text-rose-300">
+                                      {new Date(mlSnapshot.last_attack_at).toLocaleString()}
+                                    </span>
+                                  </div>
+                                )}
+                                {mlSnapshot.attack_acknowledged_at && (
+                                  <div className="flex justify-between items-center">
+                                    <div className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-amber-500"></span><span className="text-muted">Acknowledged</span></div>
+                                    <span className="text-amber-300">
+                                      {new Date(mlSnapshot.attack_acknowledged_at).toLocaleString()}
+                                    </span>
+                                  </div>
+                                )}
+                                {mlSnapshot.last_recovered_at && mlSnapshot.operational_state === "recovering" && (
+                                  <div className="flex justify-between items-center">
+                                    <div className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-teal-500 animate-pulse"></span><span className="text-muted">Recovering (cooldown)</span></div>
+                                    <span className="text-teal-300">
+                                      {new Date(mlSnapshot.last_recovered_at).toLocaleString()}
+                                    </span>
+                                  </div>
+                                )}
+                                {mlSnapshot.attack_resolved_at && (
+                                  <div className="flex justify-between items-center">
+                                    <div className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span><span className="text-muted">Resolved</span></div>
+                                    <span className="text-emerald-300">
+                                      {new Date(mlSnapshot.attack_resolved_at).toLocaleString()}
+                                    </span>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           ) : (

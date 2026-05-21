@@ -17,6 +17,10 @@ function statusStyles(status: TopologyNodeData["status"], selected: boolean) {
       return `${base}border-red-500/80 shadow-[0_0_24px_rgba(239,68,68,0.55)]`;
     case "degraded":
       return `${base}border-amber-400/70 shadow-[0_0_20px_rgba(245,158,11,0.4)]`;
+    case "recovering":
+      return `${base}border-teal-400/80 shadow-[0_0_22px_rgba(45,212,191,0.5)]`;
+    case "acknowledged":
+      return `${base}border-amber-500/80 shadow-[0_0_22px_rgba(245,158,11,0.5)]`;
     case "unknown":
     default:
       return `${base}border-slate-400/45 opacity-75`;
@@ -36,6 +40,10 @@ function statusDot(status: TopologyNodeData["status"]) {
       return "bg-red-500 animate-pulse";
     case "degraded":
       return "bg-amber-400";
+    case "recovering":
+      return "bg-teal-400 animate-pulse";
+    case "acknowledged":
+      return "bg-amber-500";
     default:
       return "bg-slate-400";
   }

@@ -111,6 +111,11 @@ sequenceDiagram
   participant Browser
   participant API as FastAPI
 
+  Browser->>API: POST /api/v1/auth/register
+  API-->>Browser: User created, sends verification email
+  Browser->>API: POST /api/v1/auth/verify-email
+  API-->>Browser: Email verified (Customers await Admin approval, Analysts auto-approved)
+  
   Browser->>API: GET /api/v1/auth/csrf
   API-->>Browser: Set ics_csrf_token cookie + token body
   Browser->>API: POST /api/v1/auth/login (X-CSRF-Token)

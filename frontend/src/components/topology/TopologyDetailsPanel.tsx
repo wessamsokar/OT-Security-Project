@@ -35,9 +35,16 @@ export const TopologyDetailsPanel = memo(({ device }: Props) => {
           <h3 className="mt-2 text-lg font-semibold text-white">{device.name}</h3>
           <p className="mt-1 text-xs text-muted">{device.ip_address ?? "No IP"}</p>
         </div>
-        <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-muted">
-          {device.monitoring_status}
-        </span>
+        <div className="flex flex-col items-end gap-2">
+          <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-muted">
+            {device.monitoring_status}
+          </span>
+          {device.tenant_name ? (
+            <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-muted">
+              {device.tenant_name}
+            </span>
+          ) : null}
+        </div>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2 text-xs">

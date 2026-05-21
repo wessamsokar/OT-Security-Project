@@ -343,6 +343,7 @@ def send_verification_email(to_email: str, token: str) -> tuple[bool, str | None
         plain = (
             f"{brand}\n\n"
             "Confirm your email address using the secure link below.\n"
+            f"This link will expire in {settings.email_verification_token_expire_hours} hours.\n"
             "We never display security tokens in this message.\n\n"
             f"{link}\n\n"
             "If you did not create an account, you can ignore this email."
@@ -353,10 +354,10 @@ def send_verification_email(to_email: str, token: str) -> tuple[bool, str | None
             lead="Welcome aboard. Verify your address to activate your OT Sentinel account.",
             body_sections=[
                 _render_security_notice(
-                    "We never expose security tokens in email content. Use the secure button to proceed."
+                    f"We never expose security tokens in email content. Use the secure button to proceed. This link will expire in {settings.email_verification_token_expire_hours} hours."
                 ),
             ],
-            footer_text="Industrial OT security · If you did not request this message, you can safely ignore it.",
+            footer_text="Industrial OT security · If you did not request this message, you can safely ignore it. Need help? Contact your administrator.",
             preheader="Verify your email to activate your OT Sentinel account.",
             cta_label="Verify email",
             action_url=link,

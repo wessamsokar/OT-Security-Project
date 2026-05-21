@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
-import { forgotPassword, loginUser, resetPassword, verifyEmail } from "../api/authApi";
+import { forgotPassword, loginUser, requestEmailVerification, resetPassword, verifyEmail } from "../api/authApi";
 import { Button } from "../components/ui/Button";
 import { InputField } from "../components/ui/InputField";
 import { useAuth } from "../contexts/AuthContext";
@@ -28,6 +28,7 @@ export function LoginPage() {
   const [resetToken, setResetToken] = useState(tokenFromLink);
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [showResendVerification, setShowResendVerification] = useState(false);
 
   useEffect(() => {
     setResetToken(tokenFromLink);
@@ -44,6 +45,11 @@ export function LoginPage() {
   const pendingApprovalBanner = useMemo(() => {
     const st = location.state as { pendingAdminApproval?: boolean } | null | undefined;
     return Boolean(st?.pendingAdminApproval);
+  }, [location.state]);
+
+  const pendingVerificationBanner = useMemo(() => {
+    const st = location.state as { pendingEmailVerification?: boolean } | null | undefined;
+    return Boolean(st?.pendingEmailVerification);
   }, [location.state]);
 
   const pageCopy = useMemo(() => {
@@ -86,7 +92,34 @@ export function LoginPage() {
       await refresh();
       navigate("/dashboard");
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : "Unable to login right now.");
+      const msg = error instanceof Error ? error.message : "";
+      if (msg === "email_unverified") {
+         setSubmitError("Please verify your email before accessing the platform.");
+         setShowResendVerification(true);
+      } else if (msg === "pending_approval") {
+         setSubmitError("Your account is awaiting administrator approval.");
+      } else if (msg === "rejected_account") {
+         setSubmitError("Your organization’s access request was not approved. Contact your administrator if you need more information.");
+      } else if (msg === "suspended_account") {
+         setSubmitError("Your account is suspended. Contact your administrator.");
+      } else {
+         setSubmitError(msg || "Unable to login right now.");
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const onResendVerification = async () => {
+    setIsSubmitting(true);
+    setSubmitError("");
+    setAuthInfo("");
+    try {
+      const result = await requestEmailVerification(email.trim());
+      setAuthInfo(result.message);
+      setShowResendVerification(false);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Unable to resend verification email.");
     } finally {
       setIsSubmitting(false);
     }
@@ -182,6 +215,11 @@ export function LoginPage() {
                 Your registration is saved. An administrator must approve your account before you can sign in.
               </p>
             ) : null}
+            {pendingVerificationBanner ? (
+              <p className="rounded-xl border border-sky-500/35 bg-sky-500/10 px-4 py-3 text-sm leading-relaxed text-sky-300">
+                Check your email to verify your account before accessing the platform.
+              </p>
+            ) : null}
             <InputField
               id="email"
               label="Email or username"
@@ -203,9 +241,16 @@ export function LoginPage() {
 
             {submitError ? <p className="text-sm text-danger">{submitError}</p> : null}
 
-            <Button type="submit" loading={isSubmitting} className="w-full" size="lg">
-              Login
-            </Button>
+            {showResendVerification ? (
+              <Button type="button" onClick={onResendVerification} loading={isSubmitting} className="w-full" size="lg" variant="outline">
+                Resend verification email
+              </Button>
+            ) : (
+              <Button type="submit" loading={isSubmitting} className="w-full" size="lg">
+                Login
+              </Button>
+            )}
+            
             <button
               type="button"
               onClick={() => {

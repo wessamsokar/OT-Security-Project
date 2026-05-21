@@ -20,6 +20,7 @@ from app.schemas.auth import (
     LoginRequest,
     MessageResponse,
     RegisterRequest,
+    RequestEmailVerificationRequest,
     ResetPasswordRequest,
     UserResponse,
     VerifyEmailRequest,
@@ -161,7 +162,10 @@ def login(
         db.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     if not user.is_active:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is inactive")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="suspended_account")
+
+    if settings.email_verification_required and not user.is_email_verified:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="email_unverified")
 
     # Only customer accounts require admin approval before login.
     if user.role == UserRole.customer and user.onboarding_status == OnboardingStatus.pending:
@@ -173,14 +177,8 @@ def login(
     if user.onboarding_status == OnboardingStatus.rejected:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Your organization’s access request was not approved. "
-                "Contact your administrator if you need more information."
-            ),
+            detail="rejected_account",
         )
-
-    if settings.email_verification_required and not user.is_email_verified:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Email verification required")
 
     token = create_access_token(
         subject=str(user.id),
@@ -297,32 +295,53 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
 
 @router.post("/request-email-verification", response_model=MessageResponse)
 def request_email_verification(
+    payload: RequestEmailVerificationRequest,
+    request: Request,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_authenticated_user),
     db: Session = Depends(get_db),
 ) -> MessageResponse:
-    if current_user.is_email_verified:
+    email = payload.email.strip().lower()
+    user = db.query(User).filter(func.lower(User.email) == email).first()
+    
+    if not user:
+        return MessageResponse(message="If the email is registered, a verification link has been sent.")
+
+    if user.is_email_verified:
         return MessageResponse(message="Email is already verified")
 
-    invalidate_user_tokens(db, current_user.id, AuthTokenType.email_verification)
+    try:
+        from app.core.redis import get_redis_client
+        redis = get_redis_client()
+        if redis:
+            lock_key = f"email_verification_cooldown:{user.id}"
+            if redis.get(lock_key):
+                record_audit(db, action="auth.verification.resend_rate_limited", category="auth", request=request, actor=user)
+                db.commit()
+                return MessageResponse(message="A verification email was recently sent. Please wait a moment before requesting another.")
+            redis.set(lock_key, "1", ex=120)
+    except ImportError:
+        pass
+
+    invalidate_user_tokens(db, user.id, AuthTokenType.email_verification)
     token = create_user_token(
         db,
-        current_user.id,
+        user.id,
         AuthTokenType.email_verification,
         timedelta(hours=settings.email_verification_token_expire_hours),
     )
+    record_audit(db, action="auth.verification.resend", category="auth", request=request, actor=user)
     db.commit()
 
-    background_tasks.add_task(send_verification_email, current_user.email, token)
+    background_tasks.add_task(send_verification_email, user.email, token)
 
     return MessageResponse(
-        message="Verification email sent.",
+        message="If the email is registered, a verification link has been sent.",
         token=token if (settings.expose_auth_tokens or settings.app_debug) else None,
     )
 
 
 @router.post("/verify-email", response_model=MessageResponse)
-def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)) -> MessageResponse:
+def verify_email(payload: VerifyEmailRequest, request: Request, db: Session = Depends(get_db)) -> MessageResponse:
     auth_token = consume_user_token(db, payload.token, AuthTokenType.email_verification)
     if not auth_token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired token")
@@ -334,6 +353,14 @@ def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)) -> 
     if not user.is_email_verified:
         user.is_email_verified = True
         user.email_verified_at = datetime.utcnow()
+        
+        if user.role in (UserRole.analyst, UserRole.viewer) and user.onboarding_status == OnboardingStatus.pending:
+            user.onboarding_status = OnboardingStatus.approved
+            user.is_admin_approved = True
+            user.admin_approved_at = datetime.utcnow()
+            record_audit(db, action="auth.onboarding.auto_approved", category="auth", actor=user, request=request)
+            
+        record_audit(db, action="auth.verification.success", category="auth", actor=user, request=request)
         db.add(user)
 
     db.commit()

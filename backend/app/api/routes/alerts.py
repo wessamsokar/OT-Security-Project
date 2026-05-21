@@ -29,11 +29,24 @@ def list_alerts(
     current_user: User = Depends(require_permission("view_alerts")),
     tenant_id: int | None = Query(default=None),
 ) -> list[AlertResponse]:
-    query = db.query(Alert).join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
+    query = (
+        db.query(Alert, User)
+        .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
+        .outerjoin(User, TrafficRecord.user_id == User.id)
+    )
     tenant_ids = get_accessible_tenant_ids(db, current_user, tenant_id)
     if tenant_ids is not None:
         query = query.filter(TrafficRecord.user_id.in_(tenant_ids))
-    return query.order_by(Alert.created_at.desc()).limit(200).all()
+    
+    rows = query.order_by(Alert.created_at.desc()).limit(200).all()
+    results = []
+    for alert, user in rows:
+        if user:
+            alert.tenant_name = user.company_name or user.username
+        else:
+            alert.tenant_name = "Unknown"
+        results.append(alert)
+    return results
 
 
 @router.get("/dashboard", response_model=DashboardSummary)
@@ -54,7 +67,7 @@ def active_threats(
     rows_query = (
         db.query(Alert, TrafficRecord)
         .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
-        .filter(Alert.severity.in_([AlertSeverity.critical, AlertSeverity.high]))
+        .filter(Alert.severity.in_([AlertSeverity.critical, AlertSeverity.high, AlertSeverity.medium]))
     )
     tenant_ids = get_accessible_tenant_ids(db, current_user, tenant_id)
     if tenant_ids is not None:

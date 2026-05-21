@@ -1,3 +1,33 @@
+"""
+Traffic API routes.
+
+Endpoint metric sources
+-----------------------
+  POST /ingest          → creates TrafficRecord; syncs topology edge (ingest-time only)
+  POST /{id}/detect     → runs ML on existing record; updates detection fields
+  GET  /packets-by-hour → uses telemetry_aggregation.build_telemetry_summary() for
+                          consistent packet AND flow counts from a single source
+  GET  /protocol-distribution → reads from TrafficRecord directly (packet SUM per protocol)
+  GET  /health          → uses telemetry_aggregation for rolling-window metrics
+  GET  /inventory-edges → reads persisted TopologyEdge rows ONLY (NO backfill on read)
+
+Topology edge accumulation rules
+---------------------------------
+  - backfill_topology_from_traffic is NEVER called from GET endpoints
+  - It is only called at ingest time (one record) via sync_edge_from_traffic_record
+  - This prevents topology edge packet_counts from growing on every page load
+  - Edge packet_counts are for visualization only; authoritative totals come from
+    SUM(TrafficRecord.packet_count) via telemetry_aggregation
+
+Packet vs flow vs telemetry records
+-------------------------------------
+  packet_count : SUM(TrafficRecord.packet_count) — actual network packets
+  flow_count   : COUNT(TrafficRecord.id)         — ingested telemetry records
+  alert_count  : COUNT(Alert.id)                 — ML-triggered security alerts
+  These three metrics are distinct and must not be conflated in labels or queries.
+"""
+
+import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -33,7 +63,9 @@ from app.services.device_linking import (
     resolve_device_id_for_flow,
     sync_device_after_detection,
     touch_device_last_traffic,
+    resolve_stale_attacks_sweep,
 )
+from app.services.telemetry_aggregation import build_telemetry_summary
 from app.services.topology import mark_stale_edges_inactive, sync_edge_from_traffic_record
 from app.services.audit import record_audit
 from app.services.ml_client import run_inference
@@ -42,6 +74,7 @@ from app.services.tenant import get_accessible_tenant_ids
 from app.db.session import get_db
 
 router = APIRouter(prefix="/traffic", tags=["traffic"])
+logger = logging.getLogger(__name__)
 
 
 def _payload_from_record(record: TrafficRecord) -> dict:
@@ -80,6 +113,13 @@ def ingest_traffic(
     db: Session = Depends(get_db),
     current_user=Depends(require_permission("ingest_traffic")),
 ) -> TrafficRecordResponse:
+    """
+    Ingest a single ICS network flow as a TrafficRecord.
+
+    This is the ONLY place where topology edges are synced at write time.
+    sync_edge_from_traffic_record is called once per record with idempotency
+    protection so repeated retries do not inflate edge packet_counts.
+    """
     src_ip = str(payload.source_ip)
     dst_ip = str(payload.destination_ip)
     matched = resolve_device_id_for_flow(db, current_user.id, src_ip, dst_ip)
@@ -107,11 +147,33 @@ def ingest_traffic(
     db.add(record)
     db.commit()
     db.refresh(record)
-    touch_device_last_traffic(db, matched)
+    
+    # Touch both source and destination devices if they exist in inventory
+    active_devices = (
+        db.query(Device)
+        .filter(
+            Device.user_id == current_user.id,
+            Device.is_active.is_(True),
+            Device.ip_address.in_([src_ip, dst_ip])
+        )
+        .all()
+    )
+    for dev in active_devices:
+        touch_device_last_traffic(db, dev.id)
+
+    # Sync topology edge for this single new record (idempotent — see topology._upsert_edge)
+    # NOTE: backfill_topology_from_traffic is intentionally NOT called here.
+    # Only this specific new record is sync'd to prevent historical re-accumulation.
     sync_edge_from_traffic_record(db, record)
+    
+    # CRITICAL: Commit touched device BEFORE sweep, so sweep reads fresh last_traffic_at
+    db.commit()
+
     mark_stale_devices_offline(db, tenant_ids=[current_user.id])
+    resolve_stale_attacks_sweep(db, tenant_ids=[current_user.id])
     mark_stale_edges_inactive(db, tenant_ids=[current_user.id])
     db.commit()
+    
     return record
 
 
@@ -179,6 +241,7 @@ async def run_detection(
 
     evaluated_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
+    alert = None
     if should_generate_alert_from_ml(attack_detected):
         try:
             alert_orm_sev = severity_from_ml_alert_string(alert_sev)
@@ -219,13 +282,19 @@ async def run_detection(
             resource_id=record.id,
             metadata={"attack_detected": attack_detected, "ml_status": ml_status},
         )
+        # Sync topology edge for the updated record (idempotent — same record.id = no re-accumulation)
         sync_edge_from_traffic_record(db, record)
         mark_stale_devices_offline(
             db,
             tenant_ids=tenant_ids,
         )
+        resolve_stale_attacks_sweep(db, tenant_ids=tenant_ids)
         mark_stale_edges_inactive(db, tenant_ids=tenant_ids)
         db.commit()
+        
+        if alert and alert.id:
+            from app.tasks.notifications import send_alert_notification_task
+            send_alert_notification_task.delay(alert.id)
     except Exception:
         db.rollback()
         raise
@@ -253,34 +322,64 @@ def packets_by_hour(
     current_user=Depends(require_permission("view_traffic")),
     tenant_id: int | None = Query(default=None),
 ) -> PacketsByHourResponse:
-    since = datetime.now(timezone.utc) - timedelta(hours=24)
-    query = db.query(TrafficRecord).filter(TrafficRecord.created_at >= since)
+    """
+    Return 24-hour traffic telemetry summary with explicit packet AND flow counts.
+
+    Source: telemetry_aggregation.build_telemetry_summary() — the single source
+    of truth for all packet/flow metrics. Calling this multiple times returns the
+    same result for the same underlying data (pure read, no writes).
+
+    Response fields
+    ---------------
+    packet_count_total : SUM(TrafficRecord.packet_count) over 24h — network packets
+    flow_count_total   : COUNT(TrafficRecord.id) over 24h — telemetry records
+    today_total        : DEPRECATED alias = packet_count_total (backward compat)
+    avg_per_minute     : packet_count_total / actual elapsed minutes (not 24*60)
+    rows               : per-hour breakdown with both packets and flow_count
+    """
     tenant_ids = get_accessible_tenant_ids(db, current_user, tenant_id)
-    if tenant_ids is not None:
-        query = query.filter(TrafficRecord.user_id.in_(tenant_ids))
-    records = query.all()
 
-    per_hour_packets: dict[str, int] = defaultdict(int)
-    per_hour_protocols: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    summary = build_telemetry_summary(
+        db,
+        tenant_ids,
+        source_endpoint="GET /traffic/packets-by-hour",
+    )
 
-    for record in records:
-        hour_key = record.created_at.strftime("%H:00")
-        per_hour_packets[hour_key] += int(record.packet_count)
-        protocol = record.transport_protocol.upper()
-        per_hour_protocols[hour_key][protocol] += int(record.packet_count)
+    rows: list[PacketsByHourRow] = [
+        PacketsByHourRow(
+            hour=bucket["hour"],
+            packets=bucket["packet_count"],
+            flow_count=bucket["flow_count"],
+            dominant_protocol=bucket["dominant_protocol"],
+        )
+        for bucket in summary["hourly_buckets"]
+    ]
 
-    rows: list[PacketsByHourRow] = []
-    for hour in sorted(per_hour_packets.keys()):
-        protocol_counts = per_hour_protocols[hour]
-        dominant_protocol = max(protocol_counts, key=protocol_counts.get) if protocol_counts else "N/A"
-        rows.append(PacketsByHourRow(hour=hour, packets=per_hour_packets[hour], dominant_protocol=dominant_protocol))
+    # avg_per_minute: use total packets over actual elapsed time in the window.
+    # Determine the oldest record's age to compute real elapsed minutes (max 24h*60).
+    # If no records, avg is 0.
+    packet_total = summary["packet_count_24h"]
+    flow_total   = summary["flow_count_24h"]
 
-    today_total = sum(per_hour_packets.values())
-    avg_per_minute = int(today_total / (24 * 60)) if today_total else 0
-    peak_hour = max(per_hour_packets, key=per_hour_packets.get) if per_hour_packets else "N/A"
+    # Calculate elapsed minutes based on actual data range, capped at 24*60
+    # This avoids the hardcoded 24*60 division that makes avg meaningless for fresh data
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    oldest_cutoff = now - timedelta(hours=24)
+    elapsed_minutes = max(1, int((now - oldest_cutoff).total_seconds() / 60))
+    avg_per_minute = int(packet_total / elapsed_minutes) if packet_total else 0
+
+    peak_hour = summary["peak_hour"]
+
+    logger.debug(
+        "[packets_by_hour] endpoint=GET /traffic/packets-by-hour tenant_ids=%s "
+        "packet_count_24h=%d flow_count_24h=%d avg_per_min=%d peak=%s rows=%d",
+        tenant_ids, packet_total, flow_total, avg_per_minute, peak_hour, len(rows),
+    )
 
     return PacketsByHourResponse(
-        today_total=today_total,
+        packet_count_total=packet_total,
+        flow_count_total=flow_total,
+        today_total=packet_total,   # DEPRECATED alias — same as packet_count_total
         avg_per_minute=avg_per_minute,
         peak_hour=peak_hour,
         rows=rows,
@@ -294,12 +393,19 @@ def protocol_distribution(
     tenant_id: int | None = Query(default=None),
     window_hours: int = Query(24, ge=1, le=168),
 ) -> ProtocolDistributionResponse:
+    """
+    Return per-protocol packet distribution.
+
+    packets per protocol = SUM(TrafficRecord.packet_count) for flows using that protocol.
+    This is a network packet metric, NOT a flow count.
+    """
     since = datetime.now(timezone.utc) - timedelta(hours=window_hours)
     query = db.query(TrafficRecord).filter(TrafficRecord.created_at >= since)
     tenant_ids = get_accessible_tenant_ids(db, current_user, tenant_id)
     if tenant_ids is not None:
         query = query.filter(TrafficRecord.user_id.in_(tenant_ids))
 
+    # SUM of packet_count per ICS protocol category
     counts: dict[str, int] = {
         "Modbus TCP": 0,
         "DNP3": 0,
@@ -325,6 +431,13 @@ def protocol_distribution(
                 last_seen[protocol] = record.created_at
 
     total_packets = sum(counts.values())
+
+    logger.debug(
+        "[protocol_distribution] endpoint=GET /traffic/protocol-distribution "
+        "tenant_ids=%s window_hours=%d total_packets=%d breakdown=%s",
+        tenant_ids, window_hours, total_packets, counts,
+    )
+
     rows = [
         ProtocolDistributionRow(
             protocol=protocol,
@@ -348,36 +461,47 @@ def telemetry_health(
     current_user=Depends(require_permission("view_traffic")),
     tenant_id: int | None = Query(default=None),
 ) -> TelemetryHealthResponse:
-    now = datetime.now(timezone.utc)
-    window_minutes = 15
-    since_15 = now - timedelta(minutes=window_minutes)
-    since_5 = now - timedelta(minutes=5)
-    since_1 = now - timedelta(minutes=1)
+    """
+    Return rolling-window telemetry health metrics.
 
-    base_query = db.query(TrafficRecord).filter(TrafficRecord.created_at >= since_15)
+    Uses telemetry_aggregation.build_telemetry_summary() for consistent numbers.
+
+    Packet metrics (SUM of actual network packets):
+      packets_last_minute, packets_last_5min, packets_last_15min
+
+    Flow metrics (COUNT of telemetry records):
+      flow_count_last_minute, flow_count_last_5min, flow_count_last_15min
+
+    Rate: avg_packets_per_minute_15m = packets_last_15min / 15 (not hardcoded 24*60)
+    """
     tenant_ids = get_accessible_tenant_ids(db, current_user, tenant_id)
-    if tenant_ids is not None:
-        base_query = base_query.filter(TrafficRecord.user_id.in_(tenant_ids))
 
-    def _sum_packets(since: datetime) -> int:
-        q = base_query.filter(TrafficRecord.created_at >= since)
-        total = q.with_entities(func.sum(TrafficRecord.packet_count)).scalar()
-        return int(total or 0)
+    summary = build_telemetry_summary(
+        db,
+        tenant_ids,
+        source_endpoint="GET /traffic/health",
+    )
 
-    packets_last_minute = _sum_packets(since_1)
-    packets_last_5min = _sum_packets(since_5)
-    packets_last_15min = _sum_packets(since_15)
-    avg_packets_per_minute_15m = packets_last_15min / float(window_minutes)
-
-    last_seen = base_query.with_entities(func.max(TrafficRecord.created_at)).scalar()
+    logger.debug(
+        "[telemetry_health] endpoint=GET /traffic/health tenant_ids=%s "
+        "pkts_15m=%d flows_15m=%d avg_pkt_per_min=%.1f last_seen=%s",
+        tenant_ids,
+        summary["packet_count_15min"],
+        summary["flow_count_15min"],
+        summary["avg_packets_per_minute_15m"],
+        summary["last_traffic_at"],
+    )
 
     return TelemetryHealthResponse(
-        window_minutes=window_minutes,
-        packets_last_minute=packets_last_minute,
-        packets_last_5min=packets_last_5min,
-        packets_last_15min=packets_last_15min,
-        avg_packets_per_minute_15m=avg_packets_per_minute_15m,
-        last_traffic_at=last_seen,
+        window_minutes=15,
+        packets_last_minute=summary["packet_count_1min"],
+        packets_last_5min=summary["packet_count_5min"],
+        packets_last_15min=summary["packet_count_15min"],
+        avg_packets_per_minute_15m=summary["avg_packets_per_minute_15m"],
+        flow_count_last_minute=summary["flow_count_1min"],
+        flow_count_last_5min=summary["flow_count_5min"],
+        flow_count_last_15min=summary["flow_count_15min"],
+        last_traffic_at=summary["last_traffic_at"],
         dropped_packets=None,
     )
 
@@ -390,28 +514,40 @@ def inventory_edges(
     hours: int = Query(168, ge=1, le=720),
 ) -> list[InventoryEdgeResponse]:
     """
-    Legacy shape for inventory graph — backed by persisted topology_edges (connected_to).
+    Return aggregated flow edges between inventory device pairs.
+
+    Source: persisted topology_edge rows with relationship_type = connected_to.
+
+    IMPORTANT — topology backfill is NOT called from this GET endpoint.
+    Calling backfill_topology_from_traffic on every read was the primary cause
+    of edge packet_count inflation (it re-accumulated all historical packets on
+    each page load). Topology edges are now only updated at ingest time.
+
+    The packet_count returned per edge pair is the cumulative total accumulated
+    at ingest time (idempotent per record via processed_record_ids tracking).
     """
     from app.models.topology_edge import TopologyRelationshipType
-    from app.services.topology import backfill_topology_from_traffic, edges_query_for_user
+    from app.services.topology import edges_query_for_user
 
     tenant_ids = get_accessible_tenant_ids(db, current_user, tenant_id)
-    backfill_topology_from_traffic(
-        db,
-        tenant_ids=tenant_ids,
-        hours=hours,
-    )
-    db.commit()
 
+    # READ ONLY — no backfill, no writes, no side effects
     edges = (
         edges_query_for_user(db, current_user, tenant_id)
         .filter(TopologyEdge.relationship_type == TopologyRelationshipType.connected_to.value)
         .all()
     )
+
     pair_counts: dict[tuple[int, int], int] = defaultdict(int)
     for edge in edges:
         a, b = sorted((edge.source_device_id, edge.target_device_id))
         pair_counts[(a, b)] += int(edge.packet_count or 0)
+
+    logger.debug(
+        "[inventory_edges] endpoint=GET /traffic/inventory-edges tenant_ids=%s "
+        "edge_pairs=%d hours_filter=%d",
+        tenant_ids, len(pair_counts), hours,
+    )
 
     return [
         InventoryEdgeResponse(device_a_id=a, device_b_id=b, packet_count=cnt)

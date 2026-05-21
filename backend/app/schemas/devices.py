@@ -14,7 +14,7 @@ class DeviceBase(BaseModel):
 
 
 class DeviceCreate(DeviceBase):
-    pass
+    user_id: int | None = None
 
 
 class DeviceUpdate(BaseModel):
@@ -30,6 +30,7 @@ class DeviceUpdate(BaseModel):
 class DeviceResponse(DeviceBase):
     id: int
     user_id: int
+    tenant_name: str | None = None
     created_at: datetime
     updated_at: datetime
     last_ml_risk_score: float | None = None
@@ -38,6 +39,11 @@ class DeviceResponse(DeviceBase):
     operational_state: str = "unknown"
     last_traffic_at: datetime | None = None
     last_seen_traffic_id: int | None = None
+    last_attack_at: datetime | None = None
+    last_recovered_at: datetime | None = None
+    attack_acknowledged_at: datetime | None = None
+    attack_resolved_at: datetime | None = None
+    anomaly_score_updated_at: datetime | None = None
 
     class Config:
         from_attributes = True
@@ -51,3 +57,11 @@ class ReconcileTrafficResponse(BaseModel):
 
 class OfflineSweepResponse(BaseModel):
     devices_marked_offline: int
+
+
+class AcknowledgeAttackRequest(BaseModel):
+    reason: str | None = None
+
+
+class ClearAttackRequest(BaseModel):
+    reason: str | None = None

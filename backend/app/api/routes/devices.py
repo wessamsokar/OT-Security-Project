@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy.orm import Session, joinedload
 
 from app.api.dependencies import require_permission
 from app.db.session import get_db
@@ -7,16 +7,19 @@ from app.models.device import Device
 from app.models.user import User, UserRole
 from app.services.tenant import get_accessible_tenant_ids
 from app.schemas.devices import (
+    AcknowledgeAttackRequest,
+    ClearAttackRequest,
     DeviceCreate,
     DeviceResponse,
     DeviceUpdate,
     OfflineSweepResponse,
     ReconcileTrafficResponse,
 )
-from app.services.device_linking import backfill_traffic_device_links, mark_stale_devices_offline
+from app.services.device_linking import backfill_traffic_device_links, mark_stale_devices_offline, resolve_stale_attacks_sweep
 from app.services.device_metadata import sanitize_device_metadata
 from app.services.device_operational import refresh_device_operational_state
 from app.services.topology import sync_metadata_edges_for_device
+from app.services.audit import record_audit
 
 router = APIRouter(prefix="/devices", tags=["devices"])
 
@@ -38,6 +41,7 @@ def sweep_offline_devices(
     """Mark inventory assets offline when no traffic has been observed within the configured window."""
     tenant_ids = get_accessible_tenant_ids(db, current_user, tenant_id)
     n = mark_stale_devices_offline(db, tenant_ids=tenant_ids)
+    r = resolve_stale_attacks_sweep(db, tenant_ids=tenant_ids)
     db.commit()
     return OfflineSweepResponse(devices_marked_offline=n)
 
@@ -50,8 +54,9 @@ def list_devices(
 ) -> list[DeviceResponse]:
     tenant_ids = get_accessible_tenant_ids(db, current_user, tenant_id)
     mark_stale_devices_offline(db, tenant_ids=tenant_ids)
+    resolve_stale_attacks_sweep(db, tenant_ids=tenant_ids)
     db.commit()
-    query = db.query(Device)
+    query = db.query(Device).options(joinedload(Device.owner))
     if tenant_ids is not None:
         query = query.filter(Device.user_id.in_(tenant_ids))
     devices = query.order_by(Device.created_at.desc()).all()
@@ -68,9 +73,11 @@ def list_my_devices(
 ) -> list[DeviceResponse]:
     # list_my_devices is strictly for the logged in user
     mark_stale_devices_offline(db, tenant_ids=[current_user.id])
+    resolve_stale_attacks_sweep(db, tenant_ids=[current_user.id])
     db.commit()
     return (
         db.query(Device)
+        .options(joinedload(Device.owner))
         .filter(Device.user_id == current_user.id)
         .order_by(Device.created_at.desc())
         .all()
@@ -83,9 +90,16 @@ def create_device(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("create_devices")),
 ) -> DeviceResponse:
+    if current_user.role == UserRole.admin:
+        if not payload.user_id:
+            raise HTTPException(status_code=400, detail="Admin must select a customer environment (user_id)")
+        target_user_id = payload.user_id
+    else:
+        target_user_id = current_user.id
+
     meta = sanitize_device_metadata(dict(payload.metadata_json or {}))
     device = Device(
-        user_id=current_user.id,
+        user_id=target_user_id,
         name=payload.name.strip(),
         device_type=payload.device_type,
         ip_address=str(payload.ip_address) if payload.ip_address else None,
@@ -185,3 +199,86 @@ def delete_device(
     db.delete(device)
     db.commit()
     return None
+
+
+@router.post("/{device_id}/acknowledge-attack", response_model=DeviceResponse)
+def acknowledge_device_attack(
+    device_id: int,
+    payload: AcknowledgeAttackRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    # Acknowledging requires analyst or admin
+    current_user: User = Depends(require_permission("edit_devices")),
+) -> DeviceResponse:
+    from datetime import datetime, timezone
+    device = _get_device(db, device_id, current_user)
+    if not device:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+        
+    previous_state = device.operational_state
+    device.attack_acknowledged_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.add(device)
+    
+    record_audit(
+        db,
+        action="device.acknowledge_attack",
+        category="security",
+        actor=current_user,
+        request=request,
+        resource_type="device",
+        resource_id=device.id,
+        metadata={
+            "previous_state": previous_state,
+            "new_state": device.operational_state,
+            "reason": payload.reason,
+            "source": "manual",
+        }
+    )
+    
+    db.commit()
+    db.refresh(device)
+    return device
+
+
+@router.post("/{device_id}/clear-attack", response_model=DeviceResponse)
+def clear_device_attack(
+    device_id: int,
+    payload: ClearAttackRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("edit_devices")),
+) -> DeviceResponse:
+    from datetime import datetime, timezone
+    device = _get_device(db, device_id, current_user)
+    if not device:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+        
+    previous_state = device.operational_state
+    
+    device.monitoring_status = "active"
+    device.last_ml_risk_score = 0.0
+    device.attack_resolved_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    device.last_recovered_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.add(device)
+    
+    refresh_device_operational_state(device, log_changes=True, source="clear_attack")
+    
+    record_audit(
+        db,
+        action="device.clear_attack",
+        category="security",
+        actor=current_user,
+        request=request,
+        resource_type="device",
+        resource_id=device.id,
+        metadata={
+            "previous_state": previous_state,
+            "new_state": device.operational_state,
+            "reason": payload.reason,
+            "source": "manual",
+        }
+    )
+    
+    db.commit()
+    db.refresh(device)
+    return device

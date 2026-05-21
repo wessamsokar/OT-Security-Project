@@ -19,13 +19,19 @@ export type DeviceResponse = {
   operational_state: string;
   last_traffic_at: string | null;
   last_seen_traffic_id: number | null;
+  last_attack_at: string | null;
+  last_recovered_at: string | null;
+  attack_acknowledged_at: string | null;
+  attack_resolved_at: string | null;
+  anomaly_score_updated_at: string | null;
   created_at: string;
   updated_at: string;
 };
 
 export type DeviceCreate = {
   name: string;
-  device_type?: string | null;
+  user_id?: number;
+  device_type: string | null;
   ip_address?: string | null;
   serial_number?: string | null;
   location?: string | null;
@@ -74,4 +80,14 @@ export async function updateDevice(deviceId: number, payload: DeviceUpdate): Pro
 
 export async function deleteDevice(deviceId: number): Promise<void> {
   await apiClient.delete(`/v1/devices/${deviceId}`);
+}
+
+export async function acknowledgeDeviceAttack(deviceId: number, reason?: string): Promise<DeviceResponse> {
+  const response = await apiClient.post<DeviceResponse>(`/v1/devices/${deviceId}/acknowledge-attack`, { reason });
+  return response.data;
+}
+
+export async function clearDeviceAttack(deviceId: number, reason?: string): Promise<DeviceResponse> {
+  const response = await apiClient.post<DeviceResponse>(`/v1/devices/${deviceId}/clear-attack`, { reason });
+  return response.data;
 }

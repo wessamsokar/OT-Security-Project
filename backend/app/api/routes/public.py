@@ -26,7 +26,7 @@ def live_snapshot(
     active_rows = (
         db.query(Alert, TrafficRecord)
         .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
-        .filter(Alert.severity.in_([AlertSeverity.critical, AlertSeverity.high]))
+        .filter(Alert.severity.in_([AlertSeverity.critical, AlertSeverity.high, AlertSeverity.medium]))
         .order_by(Alert.created_at.desc())
         .limit(100)
         .all()

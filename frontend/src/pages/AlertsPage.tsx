@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchAlerts, type AlertResponse } from "../api/alertsApi";
 import { connectAlertsStream } from "../api/streamApi";
 import { useTenant } from "../contexts/TenantContext";
+import { useAuth } from "../contexts/AuthContext";
 
 export function AlertsPage() {
   const [alerts, setAlerts] = useState<AlertResponse[]>([]);
@@ -10,7 +11,9 @@ export function AlertsPage() {
   const [error, setError] = useState("");
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { activeTenantId, canSelectTenant, assignedCustomers, isLoadingAssignments } = useTenant();
+  const { hasPermission } = useAuth();
   const tenantId = canSelectTenant ? activeTenantId : undefined;
+  const isGlobal = hasPermission("manage_users") && activeTenantId === undefined;
 
   useEffect(() => {
     let active = true;
@@ -92,9 +95,10 @@ export function AlertsPage() {
   }, [alerts]);
 
   const severityClass = (severity: AlertResponse["severity"]) => {
-    if (severity === "critical" || severity === "high") return "bg-rose-500/20 text-rose-300";
-    if (severity === "medium") return "bg-amber-500/20 text-amber-300";
-    return "bg-emerald-500/20 text-emerald-300";
+    if (severity === "critical") return "border-rose-600/50 bg-rose-500/20 text-rose-200 animate-pulse ring-1 ring-rose-500/50 shadow-[0_0_15px_rgba(244,63,94,0.3)]";
+    if (severity === "high") return "border-orange-500/30 bg-orange-500/15 text-orange-300";
+    if (severity === "medium") return "border-amber-500/20 bg-amber-500/10 text-amber-300";
+    return "border-slate-500/30 bg-slate-500/15 text-slate-300";
   };
 
   return (
@@ -116,7 +120,14 @@ export function AlertsPage() {
         {alerts.map((alert) => (
           <div key={alert.id} className="rounded-xl border border-white/10 bg-white/5 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-medium text-white">A-{alert.id} - {alert.summary}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-medium text-white">A-{alert.id} - {alert.summary}</p>
+                {isGlobal && alert.tenant_name ? (
+                  <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-muted">
+                    {alert.tenant_name}
+                  </span>
+                ) : null}
+              </div>
               <span className={`rounded-full px-2 py-0.5 text-xs ${severityClass(alert.severity)}`}>{alert.severity.toUpperCase()}</span>
             </div>
             <p className="mt-1 text-xs text-muted">Traffic Record: {alert.traffic_record_id} | Time: {new Date(alert.created_at).toLocaleString()}</p>

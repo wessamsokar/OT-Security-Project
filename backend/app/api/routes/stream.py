@@ -180,7 +180,7 @@ async def topology_stream(request: Request, tenant_id: int | None = None) -> Str
                 db = SessionLocal()
                 try:
                     snapshot = build_topology_snapshot(db, user, tenant_id)
-                    db.commit()
+                    # No db.commit() here — SSE generator must be read-only to avoid transaction locks
                 finally:
                     db.close()
 

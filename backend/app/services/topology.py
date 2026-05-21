@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+import logging
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy.orm import Session
 
@@ -53,7 +56,9 @@ def _upsert_edge(
     bytes_delta: int = 0,
     metadata: dict | None = None,
     at: datetime | None = None,
+    traffic_record_id: int | None = None,
 ) -> TopologyEdge:
+    """Upsert an edge with an idempotency guarantee based on optional traffic_record_id."""
     if source_id == target_id:
         raise ValueError("self-loop edge")
     at = at or _utcnow()
@@ -68,6 +73,9 @@ def _upsert_edge(
         .first()
     )
     if edge is None:
+        metadata = metadata or {}
+        if traffic_record_id:
+            metadata["processed_record_ids"] = [traffic_record_id]
         edge = TopologyEdge(
             user_id=user_id,
             source_device_id=source_id,
@@ -76,7 +84,7 @@ def _upsert_edge(
             direction=direction,
             edge_source=edge_source,
             protocol_context=protocol_context,
-            metadata_json=metadata or {},
+            metadata_json=metadata,
             packet_count=max(0, packet_delta),
             bytes_total=max(0, bytes_delta),
             is_active=True,
@@ -84,24 +92,43 @@ def _upsert_edge(
             last_seen_at=at,
         )
         db.add(edge)
+        logger.debug("[topology_edge] upsert_new edge_id=%s source_id=%s target_id=%s rel_type=%s edge_source=%s", edge.id, source_id, target_id, relationship_type, edge_source)
         return edge
 
-    edge.packet_count = int(edge.packet_count or 0) + max(0, packet_delta)
-    edge.bytes_total = int(edge.bytes_total or 0) + max(0, bytes_delta)
+    merged = dict(edge.metadata_json or {})
+    processed_ids = set(merged.get("processed_record_ids", []))
+    if traffic_record_id and traffic_record_id in processed_ids:
+        return edge
+
+    if traffic_record_id:
+        processed_ids.add(traffic_record_id)
+        merged["processed_record_ids"] = list(processed_ids)
+        edge.packet_count = int(edge.packet_count or 0) + max(0, packet_delta)
+        edge.bytes_total = int(edge.bytes_total or 0) + max(0, bytes_delta)
+
     edge.is_active = True
     edge.last_seen_at = at
     if protocol_context:
         edge.protocol_context = protocol_context
     if metadata:
-        merged = dict(edge.metadata_json or {})
         merged.update(metadata)
-        edge.metadata_json = merged
+    edge.metadata_json = merged
     db.add(edge)
+    logger.debug("[topology_edge] upsert_update edge_id=%s source_id=%s target_id=%s rel_type=%s edge_source=%s", edge.id, source_id, target_id, relationship_type, edge_source)
     return edge
 
 
 def sync_edge_from_traffic_record(db: Session, record: TrafficRecord) -> TopologyEdge | None:
-    """Upsert connected_to edge when both endpoints map to inventory devices."""
+    """
+    Upsert a connected_to topology edge from a single traffic record.
+
+    Idempotency: the record.id is passed as traffic_record_id so that repeated
+    calls with the same record (e.g. from backfill or SSE) do not accumulate
+    packet_count more than once per unique TrafficRecord.
+
+    Topology edges are activity markers for visualization — authoritative packet
+    totals always come from SUM(TrafficRecord.packet_count) in telemetry_aggregation.
+    """
     if record.device_id is None or record.user_id is None:
         return None
 
@@ -145,7 +172,9 @@ def sync_edge_from_traffic_record(db: Session, record: TrafficRecord) -> Topolog
         protocol_context=_protocol_context_from_record(record),
         packet_delta=int(record.packet_count or 0),
         bytes_delta=bytes_total,
+        # Pass record.id so _upsert_edge can guard against re-accumulation
         metadata={"last_traffic_record_id": record.id},
+        traffic_record_id=record.id,
         at=record.created_at or _utcnow(),
     )
 
@@ -224,6 +253,7 @@ def mark_stale_edges_inactive(db: Session, *, tenant_ids: list[int] | None) -> i
         TopologyEdge.is_active.is_(True),
         TopologyEdge.last_seen_at.isnot(None),
         TopologyEdge.last_seen_at < cutoff,
+        TopologyEdge.edge_source == TopologyEdgeSource.traffic_observed.value,
     )
     if tenant_ids is not None:
         q = q.filter(TopologyEdge.user_id.in_(tenant_ids))
@@ -253,15 +283,18 @@ def edges_query_for_user(db: Session, user: User, tenant_id: int | None = None):
 
 
 def build_topology_snapshot(db: Session, user: User, tenant_id: int | None = None) -> dict:
-    """Full topology snapshot for REST/SSE."""
-    from app.services.device_linking import mark_stale_devices_offline
-
+    """
+    Full topology snapshot for REST/SSE.
+    
+    This is a READ-ONLY operation. It does not perform DB writes or trigger
+    stale offline sweeps. Sweeps are triggered at ingest time (traffic.py)
+    or by background jobs, preventing race conditions with live telemetry updates.
+    """
     tenant_ids = get_accessible_tenant_ids(db, user, tenant_id)
-    mark_stale_devices_offline(db, tenant_ids=tenant_ids)
-    mark_stale_edges_inactive(db, tenant_ids=tenant_ids)
 
     devices = devices_query_for_user(db, user, tenant_id).order_by(Device.id.asc()).all()
-    refresh_operational_states_for_query(devices)
+    # Ensure operational_state is fully up to date for this snapshot in-memory
+    refresh_operational_states_for_query(devices, log_changes=False, source="sse_tick")
 
     edges = edges_query_for_user(db, user, tenant_id).order_by(TopologyEdge.last_seen_at.desc().nullslast()).all()
     device_by_id = {d.id: d for d in devices}
@@ -301,6 +334,8 @@ def build_topology_snapshot(db: Session, user: User, tenant_id: int | None = Non
         )
 
     serialized_edges = [_serialize_edge(e, device_by_id) for e in edges]
+
+    logger.debug("[topology_snapshot] built snapshot nodes=%s edges=%s active_edges=%s", len(nodes), len(edges), len([e for e in edge_activity if e["active"]]))
 
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -344,7 +379,27 @@ def backfill_topology_from_traffic(
     tenant_ids: list[int] | None,
     hours: int = 168,
 ) -> int:
-    """Rebuild traffic_observed edges from historical records (idempotent upsert)."""
+    """
+    Rebuild traffic_observed topology edges from historical TrafficRecord rows.
+
+    SAFE TO CALL REPEATEDLY — idempotent by design.
+    Each call to sync_edge_from_traffic_record passes the TrafficRecord.id as
+    traffic_record_id, which is stored in the edge's processed_record_ids set.
+    Subsequent calls for the same record will skip packet_delta accumulation,
+    so edge.packet_count never inflates from repeated backfill runs.
+
+    CALL RESTRICTIONS — this function MUST NOT be called from:
+      ✗ GET/read endpoints (causes re-accumulation on every page load)
+      ✗ SSE stream generators
+      ✗ Any path triggered automatically per-request
+
+    VALID CALL SITES:
+      ✓ POST /api/v1/traffic/ingest  (ingest-time, for the single new record)
+      ✓ Explicit admin backfill action (e.g. POST /admin/topology/backfill)
+      ✓ Startup recovery scripts (one-shot, not on every boot)
+
+    Returns the number of edges created or updated.
+    """
     since = _utcnow() - timedelta(hours=hours)
     q = db.query(TrafficRecord).filter(
         TrafficRecord.created_at >= since,
@@ -358,3 +413,4 @@ def backfill_topology_from_traffic(
         if sync_edge_from_traffic_record(db, record):
             count += 1
     return count
+

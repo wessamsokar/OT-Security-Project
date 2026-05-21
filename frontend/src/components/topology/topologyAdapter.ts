@@ -47,7 +47,9 @@ export function mapOperationalState(device: DeviceResponse): OperationalState {
     raw === "inactive" ||
     raw === "anomalous" ||
     raw === "degraded" ||
-    raw === "capture_enabled"
+    raw === "capture_enabled" ||
+    raw === "recovering" ||
+    raw === "acknowledged"
   ) {
     return raw;
   }
@@ -64,6 +66,10 @@ function pulseSpeedForStatus(status: OperationalState): number {
       return 0.8;
     case "degraded":
       return 1.2;
+    case "recovering":
+      return 1.0;
+    case "acknowledged":
+      return 0.0;
     case "online":
     case "capture_enabled":
       return 2;

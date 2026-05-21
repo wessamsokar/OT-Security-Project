@@ -17,16 +17,18 @@ import { connectAlertsStream } from "../api/streamApi";
 import { useAuth } from "../contexts/AuthContext";
 import { useTenant } from "../contexts/TenantContext";
 
-function severityClasses(severity: "High" | "Medium" | "Low") {
-  if (severity === "High") return "bg-rose-500/20 text-rose-300";
-  if (severity === "Medium") return "bg-amber-500/20 text-amber-300";
-  return "bg-emerald-500/20 text-emerald-300";
+function severityClasses(severity: "critical" | "high" | "medium" | "low") {
+  if (severity === "critical") return "border-rose-600/50 bg-rose-500/20 text-rose-200 animate-pulse ring-1 ring-rose-500/50 shadow-[0_0_15px_rgba(244,63,94,0.3)]";
+  if (severity === "high") return "border-orange-500/30 bg-orange-500/15 text-orange-300";
+  if (severity === "medium") return "border-amber-500/20 bg-amber-500/10 text-amber-300";
+  return "border-slate-500/30 bg-slate-500/15 text-slate-300";
 }
 
 function logClasses(severity: AlertResponse["severity"]) {
-  if (severity === "critical" || severity === "high") return "text-rose-200";
+  if (severity === "critical") return "text-rose-200 font-bold";
+  if (severity === "high") return "text-orange-300 font-semibold";
   if (severity === "medium") return "text-amber-200";
-  return "text-emerald-200";
+  return "text-slate-300";
 }
 
 function StatCard({
@@ -334,8 +336,19 @@ export function DashboardPage() {
       };
     }, [needsSocHealth, tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
 
-    const packetCount = summary?.total_records ?? 0;
-    const totalAlertsToday = summary?.total_alerts ?? 0;
+    /**
+     * Metric separation:
+     * - flowCount24h       : COUNT of TrafficRecord rows in last 24h (operational flows)
+     * - packetCount24h     : SUM of TrafficRecord.packet_count in last 24h (network packets)
+     * - totalRecordsAllTime: COUNT of ALL TrafficRecord rows ever (historical)
+     * - totalAlertsAllTime : COUNT of ALL Alert rows (all time)
+     *
+     * Do NOT mix these — they represent different things in the network stack.
+     */
+    const flowCount24h = summary?.flows_last_24h ?? 0;
+    const packetCount24h = summary?.total_packet_count_24h ?? 0;
+    const totalRecordsAllTime = summary?.total_records ?? 0;
+    const totalAlertsAllTime = summary?.total_alerts ?? 0;
     const meanRiskPct = ((summary?.avg_risk_score ?? 0) * 100).toFixed(1);
     const highAlerts = alerts.filter((item) => item.severity === "critical" || item.severity === "high").length;
     const deviceActiveCount = devices.filter((d) => d.is_active && d.monitoring_status === "active").length;
@@ -425,9 +438,9 @@ export function DashboardPage() {
               <StatCard label="Total users" value={adminUsers.toLocaleString()} />
               <StatCard label="Active devices" value={devices.length.toLocaleString()} />
               <StatCard label="Onboarding requests" value={pendingOnboarding} accent="text-amber-200" />
-              <StatCard label="System health" value={socHealth?.traffic_flows_in_window?.toLocaleString() ?? "—"} hint="Flows in window" />
+              <StatCard label="SOC Health" value={socHealth?.traffic_flows_in_window?.toLocaleString() ?? "—"} hint="Flow records (24h window)" />
               <StatCard label="Open incidents" value={summary?.incidents_open ?? 0} />
-              <StatCard label="Alerts today" value={totalAlertsToday} />
+              <StatCard label="Alerts (all time)" value={totalAlertsAllTime} />
               <StatCard label="Avg risk" value={`${meanRiskPct}%`} />
             </div>
 
@@ -466,11 +479,7 @@ export function DashboardPage() {
                         </div>
                         <span
                           className={`rounded-full px-2 py-0.5 text-xs ${severityClasses(
-                            alert.severity === "critical" || alert.severity === "high"
-                              ? "High"
-                              : alert.severity === "medium"
-                              ? "Medium"
-                              : "Low"
+                            alert.severity
                           )}`}
                         >
                           {alert.severity.toUpperCase()}
@@ -512,8 +521,8 @@ export function DashboardPage() {
                     <p className="mt-1 text-white">{meanRiskPct}%</p>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                    <p className="text-xs text-muted">Alerts</p>
-                    <p className="mt-1 text-white">{totalAlertsToday}</p>
+                    <p className="text-xs text-muted">Alerts (all time)</p>
+                    <p className="mt-1 text-white">{totalAlertsAllTime}</p>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-background/40 p-3">
                     <p className="text-xs text-muted">Top ml_status</p>
@@ -535,7 +544,8 @@ export function DashboardPage() {
               <StatCard label="Active alerts" value={alerts.length} accent="text-rose-200" />
               <StatCard label="High-risk detections" value={highAlerts} accent="text-amber-200" />
               <StatCard label="Open incidents" value={summary?.incidents_open ?? 0} />
-              <StatCard label="Traffic records" value={packetCount.toLocaleString()} />
+              {/* Flow records (24h): COUNT of telemetry rows in last 24h — not packet count */}
+              <StatCard label="Flow records (24h)" value={flowCount24h.toLocaleString()} hint="Telemetry records" />
             </div>
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.4fr]">
@@ -579,7 +589,7 @@ export function DashboardPage() {
                           <p className="text-sm font-medium text-white">{alert.summary}</p>
                           <p className="mt-1 text-xs text-muted">Traffic Record: {alert.traffic_record_id}</p>
                         </div>
-                        <span className={`rounded-full px-2 py-0.5 text-xs ${severityClasses(alert.severity === "critical" || alert.severity === "high" ? "High" : alert.severity === "medium" ? "Medium" : "Low")}`}>{alert.severity.toUpperCase()}</span>
+                        <span className={`rounded-full px-2 py-0.5 text-xs ${severityClasses(alert.severity)}`}>{alert.severity.toUpperCase()}</span>
                       </div>
                       <p className="mt-2 text-xs text-muted">{new Date(alert.created_at).toLocaleString()}</p>
                     </div>
@@ -594,16 +604,18 @@ export function DashboardPage() {
                 {packetsError ? <p className="mt-2 text-sm text-danger">{packetsError}</p> : null}
                 <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                   <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                    <p className="text-xs text-muted">Packets today</p>
-                    <p className="mt-1 text-white">{packets?.today_total ?? "—"}</p>
+                    {/* packet_count_total = SUM of actual network packets (not flow count) */}
+                    <p className="text-xs text-muted">Network packets (24h)</p>
+                    <p className="mt-1 text-white">{(packets?.packet_count_total ?? packets?.today_total ?? 0).toLocaleString()}</p>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                    <p className="text-xs text-muted">Avg per minute</p>
+                    {/* flow_count_total = COUNT of telemetry flow records */}
+                    <p className="text-xs text-muted">Flow records (24h)</p>
+                    <p className="mt-1 text-white">{(packets?.flow_count_total ?? 0).toLocaleString()}</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-background/40 p-3">
+                    <p className="text-xs text-muted">Avg pkts/min (15m)</p>
                     <p className="mt-1 text-white">{packets?.avg_per_minute ?? "—"}</p>
-                  </div>
-                  <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                    <p className="text-xs text-muted">Peak hour</p>
-                    <p className="mt-1 text-white">{packets?.peak_hour ?? "—"}</p>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-background/40 p-3">
                     <p className="text-xs text-muted">Top attack classes</p>
@@ -620,8 +632,9 @@ export function DashboardPage() {
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
               <StatCard label="Monitored devices" value={devices.length} />
               <StatCard label="Coverage" value={`${deviceCoverage}%`} hint={`${deviceActiveCount}/${devices.length} active`} />
-              <StatCard label="Alerts today" value={totalAlertsToday} accent="text-amber-200" />
-              <StatCard label="Traffic today" value={packets?.today_total ?? "—"} />
+              <StatCard label="Alerts (all time)" value={totalAlertsAllTime} accent="text-amber-200" />
+              {/* packet_count_total = SUM of actual network packets (24h) */}
+              <StatCard label="Network packets (24h)" value={(packets?.packet_count_total ?? packets?.today_total ?? 0).toLocaleString()} />
             </div>
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -667,7 +680,8 @@ export function DashboardPage() {
               <StatCard label="Registered assets" value={devices.length} />
               <StatCard label="Coverage" value={`${deviceCoverage}%`} hint={`${deviceActiveCount}/${devices.length} active`} />
               <StatCard label="Onboarding status" value={user?.onboardingStatus ?? "—"} />
-              <StatCard label="Telemetry today" value={packets?.today_total ?? "—"} />
+              {/* packet_count_total = network packets (SUM); flow_count_total = telemetry rows (COUNT) */}
+              <StatCard label="Network packets (24h)" value={(packets?.packet_count_total ?? packets?.today_total ?? 0).toLocaleString()} hint={`${(packets?.flow_count_total ?? 0).toLocaleString()} flow records`} />
             </div>
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.2fr]">
@@ -726,16 +740,17 @@ export function DashboardPage() {
                 <h2 className="text-lg font-medium text-white">ML status overview</h2>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                   <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                    <p className="text-xs text-muted">Alerts</p>
-                    <p className="mt-1 text-white">{totalAlertsToday}</p>
+                    <p className="text-xs text-muted">Alerts (all time)</p>
+                    <p className="mt-1 text-white">{totalAlertsAllTime}</p>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-background/40 p-3">
                     <p className="text-xs text-muted">Avg risk</p>
                     <p className="mt-1 text-white">{meanRiskPct}%</p>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                    <p className="text-xs text-muted">Traffic records</p>
-                    <p className="mt-1 text-white">{packetCount.toLocaleString()}</p>
+                    {/* flow records 24h = COUNT of telemetry rows (not packets) */}
+                    <p className="text-xs text-muted">Flow records (24h)</p>
+                    <p className="mt-1 text-white">{flowCount24h.toLocaleString()}</p>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-background/40 p-3">
                     <p className="text-xs text-muted">Top ML status</p>

@@ -22,6 +22,7 @@ export const OT_META = {
 
 export type OtTrafficSourceFormValues = {
   name: string;
+  customerId?: number;
   assetType: string;
   criticalityLevel: string;
   siteLocation: string;
@@ -44,6 +45,7 @@ export type OtTrafficSourceFormValues = {
 export function defaultOtTrafficSourceForm(): OtTrafficSourceFormValues {
   return {
     name: "",
+    customerId: undefined,
     assetType: "PLC",
     criticalityLevel: "Medium",
     siteLocation: "",
@@ -107,6 +109,7 @@ export function formValuesFromDevice(device: DeviceResponse): OtTrafficSourceFor
   return {
     ...base,
     name: device.name ?? "",
+    customerId: device.user_id,
     assetType: device.device_type ?? "PLC",
     siteLocation: device.location ?? "",
     ipAddress: device.ip_address ?? "",
@@ -251,6 +254,8 @@ export function resolveOperationalBadge(device: DeviceResponse): {
       };
     case "degraded":
       return { label: "Degraded", className: "border-amber-500/35 bg-amber-500/15 text-amber-100" };
+    case "recovering":
+      return { label: "Recovering", className: "border-teal-500/40 bg-teal-500/15 text-teal-100 animate-pulse" };
     case "capture_enabled":
       return { label: "Capture on", className: "border-violet-500/35 bg-violet-500/15 text-violet-100" };
     case "unknown":

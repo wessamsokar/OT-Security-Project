@@ -30,6 +30,7 @@ function TopologyContent() {
   const { hasPermission } = useAuth();
   const { activeTenantId, canSelectTenant, assignedCustomers, isLoadingAssignments } = useTenant();
   const tenantId = canSelectTenant ? activeTenantId : undefined;
+  const isGlobal = hasPermission("manage_users") && activeTenantId === undefined;
   const { loading, error } = useTopologyLive(tenantId, {
     enabled: !canSelectTenant || (!isLoadingAssignments && assignedCustomers.length > 0)
   });
@@ -103,12 +104,21 @@ function TopologyContent() {
           ) : null}
           {loading ? <p className="text-sm text-muted">Loading topology…</p> : null}
           {error ? <p className="text-sm text-danger">{error}</p> : null}
-          {!loading && !error && !devices.length ? (
+          {!loading && !error && !devices.length && !isGlobal ? (
             <p className="text-sm text-muted">No devices found for this tenant.</p>
           ) : null}
-          <TopologyBoundary>
-            <TopologyGraph nodes={nodes} edges={graphEdges} onSelectNode={selectDevice} />
-          </TopologyBoundary>
+          {isGlobal ? (
+            <div className="flex h-64 items-center justify-center rounded-2xl border border-dashed border-white/20 bg-white/5 p-6 text-center">
+              <div>
+                <p className="text-sm text-muted">Global View</p>
+                <p className="mt-1 text-sm font-medium text-white">Please select a customer environment to view topology.</p>
+              </div>
+            </div>
+          ) : (
+            <TopologyBoundary>
+              <TopologyGraph nodes={nodes} edges={graphEdges} onSelectNode={selectDevice} />
+            </TopologyBoundary>
+          )}
           <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
             <span className="inline-flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-emerald-400" /> Online
@@ -179,6 +189,11 @@ function TopologyContent() {
                     >
                       {device.name}
                     </button>
+                    {isGlobal && device.tenant_name ? (
+                      <span className="ml-2 inline-block rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-muted">
+                        {device.tenant_name}
+                      </span>
+                    ) : null}
                   </td>
                   <td className="px-4 py-3 text-muted">{device.device_type ?? "-"}</td>
                   <td className="px-4 py-3 text-muted">

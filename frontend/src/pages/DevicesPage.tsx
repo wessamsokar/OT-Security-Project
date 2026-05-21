@@ -9,9 +9,10 @@ import {
   OT_META,
   parseAdvancedMetadataJson,
   resolveMonitoringBadge,
+  resolveOperationalBadge,
   type OtTrafficSourceFormValues
 } from "../components/devices/otAssetMetadata";
-import { createDevice, deleteDevice, fetchDevices, updateDevice, type DeviceResponse } from "../api/devicesApi";
+import { createDevice, deleteDevice, clearDeviceAttack, acknowledgeDeviceAttack, fetchDevices, updateDevice, type DeviceResponse } from "../api/devicesApi";
 import { Button } from "../components/ui/Button";
 import { useAuth } from "../contexts/AuthContext";
 import { useTenant } from "../contexts/TenantContext";
@@ -80,8 +81,17 @@ export function DevicesPage() {
     };
 
     void load();
+
+    // Poll every 10s for live telemetry status changes, but only if tab is visible
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void load();
+      }
+    }, 10000);
+
     return () => {
       active = false;
+      window.clearInterval(timer);
     };
   }, [tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
 
@@ -145,6 +155,7 @@ export function DevicesPage() {
         }
         const created = await createDevice({
           name: form.name.trim(),
+          user_id: form.customerId,
           device_type: form.assetType.trim() || null,
           ip_address: form.ipAddress.trim() || null,
           serial_number: null,
@@ -190,6 +201,34 @@ export function DevicesPage() {
       setDevices((prev) => prev.filter((row) => row.id !== deviceId));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to delete traffic source.");
+    }
+  };
+
+  const handleClearAttack = async (deviceId: number) => {
+    if (!canEditDevices) {
+      setError("You do not have permission to edit devices.");
+      return;
+    }
+    try {
+      const updated = await clearDeviceAttack(deviceId, "Manual resolve");
+      setDevices((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
+      void refreshTopologyIfMounted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to clear attack status.");
+    }
+  };
+
+  const handleAcknowledgeAttack = async (deviceId: number) => {
+    if (!canEditDevices) {
+      setError("You do not have permission to edit devices.");
+      return;
+    }
+    try {
+      const updated = await acknowledgeDeviceAttack(deviceId, "Manual acknowledgment");
+      setDevices((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
+      void refreshTopologyIfMounted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to acknowledge alert.");
     }
   };
 
@@ -242,7 +281,8 @@ export function DevicesPage() {
           </thead>
           <tbody>
             {tableRows.map((device) => {
-              const badge = resolveMonitoringBadge(device);
+              const mlBadge = resolveMonitoringBadge(device);
+              const opBadge = resolveOperationalBadge(device);
               const meta =
                 device.metadata_json && typeof device.metadata_json === "object"
                   ? (device.metadata_json as Record<string, unknown>)
@@ -266,16 +306,18 @@ export function DevicesPage() {
                     <span
                       className={[
                         "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium",
-                        badge.className
+                        opBadge.className
                       ].join(" ")}
                     >
-                      {badge.label}
+                      {opBadge.label}
                     </span>
-                    {device.last_ml_risk_score != null ? (
-                      <span className="mt-1 block text-[10px] text-muted">
-                        ML risk {(device.last_ml_risk_score * 100).toFixed(0)}%
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <span className={`h-1.5 w-1.5 rounded-full ${mlBadge.className.split(" ")[0]} ${mlBadge.className.split(" ")[1]}`} />
+                      <span className="text-[10px] text-muted">
+                        ML {mlBadge.label}
+                        {device.last_ml_risk_score != null ? ` · ${(device.last_ml_risk_score * 100).toFixed(0)}% risk` : ""}
                       </span>
-                    ) : null}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-muted">{new Date(device.updated_at).toLocaleString()}</td>
                   <td className="px-4 py-3">
@@ -284,6 +326,18 @@ export function DevicesPage() {
                         {canEditDevices ? (
                           <Button variant="ghost" size="sm" onClick={() => handleEdit(device)}>
                             Edit
+                          </Button>
+                        ) : null}
+                        {canEditDevices &&
+                        (device.monitoring_status === "under_attack" || device.monitoring_status === "suspicious") && !device.attack_acknowledged_at ? (
+                          <Button variant="outline" size="sm" onClick={() => void handleAcknowledgeAttack(device.id)} className="border-amber-500/50 text-amber-200 hover:bg-amber-500/20">
+                            Acknowledge
+                          </Button>
+                        ) : null}
+                        {canEditDevices &&
+                        (device.monitoring_status === "under_attack" || device.monitoring_status === "suspicious" || device.monitoring_status === "active") && device.operational_state !== "online" ? (
+                          <Button variant="outline" size="sm" onClick={() => void handleClearAttack(device.id)} className="border-rose-500/50 text-rose-200 hover:bg-rose-500/20">
+                            Resolve
                           </Button>
                         ) : null}
                         {canDeleteDevices ? (
@@ -318,7 +372,17 @@ export function DevicesPage() {
             ? (() => {
                 const d = devices.find((x) => x.id === editingId);
                 return d
-                  ? { last_ml_risk_score: d.last_ml_risk_score, last_ml_status: d.last_ml_status }
+                  ? { 
+                      id: d.id,
+                      last_ml_risk_score: d.last_ml_risk_score, 
+                      last_ml_status: d.last_ml_status,
+                      last_attack_at: d.last_attack_at,
+                      last_recovered_at: d.last_recovered_at,
+                      attack_acknowledged_at: d.attack_acknowledged_at,
+                      attack_resolved_at: d.attack_resolved_at,
+                      monitoring_status: d.monitoring_status,
+                      operational_state: d.operational_state
+                    }
                   : undefined;
               })()
             : undefined
@@ -333,6 +397,8 @@ export function DevicesPage() {
         onClose={closeModal}
         onEdgesChanged={() => void refreshTopologyIfMounted()}
         onPanelRef={(ref) => { panelRef.current = ref; }}
+        onClearAttack={(id) => void handleClearAttack(id)}
+        onAcknowledgeAttack={(id) => void handleAcknowledgeAttack(id)}
       />
     </section>
   );

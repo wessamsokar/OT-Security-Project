@@ -11,8 +11,25 @@ export type AlertResponse = {
   created_at: string;
 };
 
+/**
+ * Dashboard summary aggregates from GET /api/v1/alerts/dashboard.
+ *
+ * Metric separation:
+ *   total_records          : ALL-TIME count of TrafficRecord rows (historical context).
+ *   flows_last_24h         : COUNT of TrafficRecord rows in the last 24h (operational).
+ *                            Matches soc-health traffic_flows_in_window (same window).
+ *   total_packet_count_24h : SUM of TrafficRecord.packet_count in the last 24h.
+ *                            Actual network packets — NOT flow count.
+ *   total_alerts           : ALL-TIME count of Alert rows (not windowed).
+ */
 export type DashboardSummary = {
+  /** ALL-TIME telemetry row count (historical) */
   total_records: number;
+  /** COUNT of telemetry flow records in the last 24h (operational, windowed) */
+  flows_last_24h: number;
+  /** SUM of network packets (TrafficRecord.packet_count) in the last 24h */
+  total_packet_count_24h: number;
+  /** ALL-TIME alert count */
   total_alerts: number;
   incidents_open: number;
   avg_risk_score: number;

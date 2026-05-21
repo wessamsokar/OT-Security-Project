@@ -2,6 +2,22 @@ import axios from "axios";
 
 import { apiClient } from "./client";
 
+/**
+ * Traffic API — metric type conventions
+ * ---------------------------------------
+ * packet_count / packets : SUM of TrafficRecord.packet_count — actual network packets.
+ *                          One flow record may carry many packets.
+ *
+ * flow_count             : COUNT of TrafficRecord rows — ingested telemetry records.
+ *                          One per network flow session observed by a sensor.
+ *
+ * alert_count            : COUNT of Alert rows — ML-triggered security events.
+ *                          Separate from both packet and flow counts.
+ *
+ * today_total            : DEPRECATED alias for packet_count_total. Use packet_count_total
+ *                          in new code. Kept for backward compatibility only.
+ */
+
 type FastApiValidationError = {
   msg?: string;
 };
@@ -83,6 +99,64 @@ export type ICSTrafficIn = {
   metadata_json?: Record<string, unknown>;
 };
 
+export type InventoryEdge = {
+  device_a_id: number;
+  device_b_id: number;
+  /** Cumulative network packet count between this device pair (topology edge total). */
+  packet_count: number;
+};
+
+/**
+ * Per-hour traffic breakdown.
+ *
+ * packets    : SUM of actual network packets in this hour
+ * flow_count : COUNT of telemetry flow records in this hour
+ */
+export type ProtocolVisibilityRow = {
+  protocol: string;
+  /** Network packet count (SUM of TrafficRecord.packet_count). NOT a flow count. */
+  packets: number;
+  last_seen_at: string | null;
+};
+
+export type ProtocolVisibilityResponse = {
+  window_hours: number;
+  /** Total network packets across all protocols (SUM). NOT a flow count. */
+  total_packets: number;
+  protocols: ProtocolVisibilityRow[];
+};
+
+/**
+ * Rolling-window telemetry health.
+ *
+ * packets_last_*     : Actual network packets (SUM of TrafficRecord.packet_count)
+ * flow_count_last_*  : Telemetry flow records ingested (COUNT of TrafficRecord rows)
+ *
+ * These are distinct metrics. flows ≠ packets.
+ */
+export type TelemetryHealthResponse = {
+  window_minutes: number;
+
+  /** Network packets (SUM) in the last 1 minute */
+  packets_last_minute: number;
+  /** Network packets (SUM) in the last 5 minutes */
+  packets_last_5min: number;
+  /** Network packets (SUM) in the last 15 minutes */
+  packets_last_15min: number;
+  /** Avg network packets per minute over the 15m window (not hardcoded 24*60) */
+  avg_packets_per_minute_15m: number;
+
+  /** Telemetry flow records ingested in the last 1 minute */
+  flow_count_last_minute: number;
+  /** Telemetry flow records ingested in the last 5 minutes */
+  flow_count_last_5min: number;
+  /** Telemetry flow records ingested in the last 15 minutes */
+  flow_count_last_15min: number;
+
+  last_traffic_at: string | null;
+  dropped_packets: number | null;
+};
+
 export async function ingestTraffic(payload: ICSTrafficIn): Promise<TrafficRecordResponse> {
   try {
     const response = await apiClient.post<TrafficRecordResponse>("/v1/traffic/ingest", payload);
@@ -100,34 +174,6 @@ export async function runDetection(recordId: number): Promise<DetectionResponse>
     throw parseTrafficApiError(error, "Unable to run ML detection on this record.");
   }
 }
-
-export type InventoryEdge = {
-  device_a_id: number;
-  device_b_id: number;
-  packet_count: number;
-};
-
-export type ProtocolVisibilityRow = {
-  protocol: string;
-  packets: number;
-  last_seen_at: string | null;
-};
-
-export type ProtocolVisibilityResponse = {
-  window_hours: number;
-  total_packets: number;
-  protocols: ProtocolVisibilityRow[];
-};
-
-export type TelemetryHealthResponse = {
-  window_minutes: number;
-  packets_last_minute: number;
-  packets_last_5min: number;
-  packets_last_15min: number;
-  avg_packets_per_minute_15m: number;
-  last_traffic_at: string | null;
-  dropped_packets: number | null;
-};
 
 export async function fetchInventoryEdges(hours = 168, tenantId?: number): Promise<InventoryEdge[]> {
   try {

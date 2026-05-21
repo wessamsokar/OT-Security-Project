@@ -182,3 +182,10 @@ export async function verifyEmail(token: string): Promise<{ message: string }> {
   const response = await apiClient.post<{ message: string }>("/v1/auth/verify-email", { token });
   return response.data;
 }
+
+export async function requestEmailVerification(email: string): Promise<{ message: string; token?: string }> {
+  const response = await apiClient.post<{ message: string; token?: string }>("/v1/auth/request-email-verification", {
+    email
+  });
+  return response.data;
+}

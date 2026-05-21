@@ -101,9 +101,9 @@ ATTACK_INFO: dict[str, dict] = {
 
 # Severity escalation thresholds (risk_score → severity label override)
 SEVERITY_THRESHOLDS = {
-    "CRITICAL": 90,
-    "HIGH":     65,
-    "MEDIUM":   35,
+    "CRITICAL": 85,
+    "HIGH":     60,
+    "MEDIUM":   30,
     "LOW":      0,
 }
 
@@ -374,7 +374,7 @@ class NDREngine:
         score = round(min(base + ae_bonus + rec_pen, 100.0), 1)
 
         # Derive severity label
-        if score >= SEVERITY_THRESHOLDS["CRITICAL"] and base_sev >= 7:
+        if score >= SEVERITY_THRESHOLDS["CRITICAL"]:
             severity = "CRITICAL"
         elif score >= SEVERITY_THRESHOLDS["HIGH"]:
             severity = "HIGH"

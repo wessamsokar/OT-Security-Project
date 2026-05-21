@@ -29,3 +29,11 @@ class Alert(Base):
     status: Mapped[AlertStatus] = mapped_column(SqlEnum(AlertStatus), nullable=False, default=AlertStatus.new)
     summary: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    @property
+    def tenant_name(self) -> str | None:
+        # Avoid direct DB queries in properties if possible.
+        # But we need access to the traffic_record -> user -> name.
+        # Let's see if we can do this without causing N+1 implicitly if not joined.
+        # Since Alert doesn't have a direct relationship to User, we can manually populate it in the route.
+        return None

@@ -4,11 +4,11 @@ import { AlertTriangle, Radar, ShieldAlert, Siren } from "lucide-react";
 import type { AlertResponse, DashboardSummary } from "../../api/alertsApi";
 import type { ActiveThreat } from "../../api/phase2Api";
 
-const SEVERITY_CLASS: Record<AlertResponse["severity"], string> = {
-  low: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
+const severityColors = {
+  critical: "border-rose-600/50 bg-rose-500/20 text-rose-200 animate-pulse ring-1 ring-rose-500/50 shadow-[0_0_15px_rgba(244,63,94,0.3)]",
+  high: "border-orange-500/30 bg-orange-500/15 text-orange-300",
   medium: "border-amber-500/20 bg-amber-500/10 text-amber-300",
-  high: "border-rose-500/20 bg-rose-500/10 text-rose-300",
-  critical: "border-rose-500/30 bg-rose-500/20 text-rose-200"
+  low: "border-slate-500/30 bg-slate-500/15 text-slate-300",
 };
 
 type Props = {
@@ -122,7 +122,7 @@ export const ThreatOperationsPanel = memo(function ThreatOperationsPanel({
                     <p className="truncate text-white font-medium">{alert.summary}</p>
                     <p className="text-xs text-muted">{new Date(alert.created_at).toLocaleTimeString()}</p>
                   </div>
-                  <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] ${SEVERITY_CLASS[alert.severity]}`}>
+                  <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] ${severityColors[alert.severity]}`}>
                     {alert.severity}
                   </span>
                 </div>

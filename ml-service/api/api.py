@@ -341,13 +341,9 @@ def _derive_ml_status_from_engine(result: Dict[str, Any]) -> str:
     benign = raw in ("BENIGN", "NORMAL")
     is_anomaly = bool(result.get("is_anomaly", False))
 
-    if sev == "CRITICAL":
+    if sev == "CRITICAL" or (not benign and sev == "HIGH"):
         return "under_attack"
-    if not benign and sev == "HIGH":
-        return "under_attack"
-    if sev == "MEDIUM" or raw == "SUSPICIOUS" or is_anomaly:
-        return "suspicious"
-    if sev == "HIGH" and benign:
+    if sev == "MEDIUM" or (sev == "HIGH" and benign):
         return "suspicious"
     return "normal"
 
@@ -437,7 +433,7 @@ def canonical_infer_contract(result: Dict[str, Any]) -> Dict[str, Any]:
     raw_attack_upper = raw_attack
     attack_class = _attack_class_from_engine_label(raw_attack_upper)
 
-    attack_detected = ml_status in ("suspicious", "under_attack")
+    attack_detected = not (label_raw.upper() in ("BENIGN", "NORMAL"))
 
     explanation = {
         "method": "smartgrid_infer",

@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     packet_capture_dir: str = "./captures"
 
     device_offline_after_minutes: int = 60
+    device_recovery_timeout_minutes: int = 15
 
     @field_validator("smtp_username", "smtp_from_email", "smtp_host", mode="before")
     @classmethod

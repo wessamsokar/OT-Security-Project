@@ -120,8 +120,8 @@ export function RegisterPage() {
       } catch {
         // optional
       }
-      setSubmitInfo("Request submitted. Your account status is Pending verification until ICS security administration approves it.");
-      navigate("/login", { state: { pendingAdminApproval: true } });
+      setSubmitInfo("Request submitted. Check your email to verify your account.");
+      navigate("/login", { state: { pendingEmailVerification: true } });
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "Unable to create account right now.");
     } finally {
