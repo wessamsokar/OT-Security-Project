@@ -37,12 +37,7 @@ export const TOP_NAV_ITEMS: NavItem[] = [
     permissions: ["view_alerts"],
     roles: ["admin", "analyst"]
   },
-  {
-    to: "/dashboard/active-threats",
-    label: "Threats",
-    permissions: ["view_alerts"],
-    roles: ["analyst"]
-  },
+
   {
     to: "/dashboard/packets-analysed",
     label: "Telemetry",
@@ -65,13 +60,7 @@ export const SIDEBAR_SECTIONS: NavSection[] = [
         permissions: ["view_dashboard"],
         allowPending: true
       },
-      {
-        to: "/dashboard/active-threats",
-        label: "Active Threats",
-        icon: AlertTriangle,
-        permissions: ["view_alerts"],
-        roles: ["analyst"]
-      },
+
       { to: "/dashboard/alerts", label: "Alerts", icon: Bell, permissions: ["view_alerts"], roles: ["admin", "analyst"] },
       { to: "/dashboard/devices", label: "Devices", icon: Activity, permissions: ["view_devices"], roles: ["admin", "viewer", "customer"] }
     ]
@@ -80,15 +69,13 @@ export const SIDEBAR_SECTIONS: NavSection[] = [
     title: "Operations",
     items: [
       { to: "/dashboard/inventory", label: "OT Inventory", icon: Network, permissions: ["view_devices"], roles: ["admin", "viewer", "customer"] },
-      { to: "/dashboard/packets-analysed", label: "Traffic Telemetry", icon: BarChart3, permissions: ["view_traffic"], roles: ["admin", "analyst", "viewer", "customer"] },
-      { to: "/dashboard/mttr", label: "MTTR", icon: Clock3, permissions: ["view_alerts"], roles: ["analyst"] }
+      { to: "/dashboard/packets-analysed", label: "Traffic Telemetry", icon: BarChart3, permissions: ["view_traffic"], roles: ["admin", "analyst", "viewer", "customer"] }
     ]
   },
   {
     title: "Analytics",
     items: [
-      { to: "/dashboard/soc-health", label: "SOC Health", icon: Shield, permissions: ["view_soc_health"], roles: ["admin", "viewer", "customer"] },
-      { to: "/dashboard/ml-confidence", label: "ML Operations", icon: BrainCircuit, permissions: ["view_models"], roles: ["admin"] }
+      { to: "/dashboard/soc-health", label: "SOC Health", icon: Shield, permissions: ["view_soc_health"], roles: ["admin", "viewer", "customer"] }
     ]
   },
   {

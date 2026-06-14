@@ -65,7 +65,7 @@ class DetectionResponse(BaseModel):
     attack_class: str
     confidence: float
     explanation: dict
-    model_version: str | None
+    model_version: str | None = None
 
 
 class TrafficRecordResponse(BaseModel):

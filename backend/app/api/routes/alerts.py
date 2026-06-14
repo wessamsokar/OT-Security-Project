@@ -42,9 +42,9 @@ def list_alerts(
     results = []
     for alert, user in rows:
         if user:
-            alert.tenant_name = user.company_name or user.username
+            alert.tenant_name = user.company_name or "Unknown Environment"
         else:
-            alert.tenant_name = "Unknown"
+            alert.tenant_name = "Unknown Environment"
         results.append(alert)
     return results
 

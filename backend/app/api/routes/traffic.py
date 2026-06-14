@@ -122,7 +122,29 @@ def ingest_traffic(
     """
     src_ip = str(payload.source_ip)
     dst_ip = str(payload.destination_ip)
-    matched = resolve_device_id_for_flow(db, current_user.id, src_ip, dst_ip)
+    tenant_ids = get_accessible_tenant_ids(db, current_user)
+    matched = resolve_device_id_for_flow(db, current_user.id, src_ip, dst_ip, tenant_ids=tenant_ids)
+
+    if matched:
+        device = db.query(Device).filter(Device.id == matched).first()
+        if device and device.metadata_json.get("monitoring_enabled") is False:
+            # Respect explicit monitoring disabled flag
+            return TrafficRecordResponse(
+                id=0,
+                user_id=current_user.id,
+                device_id=matched,
+                source_ip=src_ip,
+                destination_ip=dst_ip,
+                source_port=payload.source_port,
+                destination_port=payload.destination_port,
+                transport_protocol=payload.transport_protocol,
+                packet_count=payload.packet_count,
+                bytes_in=payload.bytes_in,
+                bytes_out=payload.bytes_out,
+                duration_ms=payload.duration_ms,
+                payload_entropy=payload.payload_entropy,
+                created_at=datetime.utcnow()
+            )
 
     record = TrafficRecord(
         user_id=current_user.id,
@@ -149,15 +171,18 @@ def ingest_traffic(
     db.refresh(record)
     
     # Touch both source and destination devices if they exist in inventory
-    active_devices = (
+    active_devices_query = (
         db.query(Device)
         .filter(
-            Device.user_id == current_user.id,
             Device.is_active.is_(True),
             Device.ip_address.in_([src_ip, dst_ip])
         )
-        .all()
     )
+    if tenant_ids is not None:
+        active_devices_query = active_devices_query.filter(Device.user_id.in_(tenant_ids))
+    
+    active_devices = active_devices_query.all()
+    
     for dev in active_devices:
         touch_device_last_traffic(db, dev.id)
 
@@ -199,9 +224,25 @@ async def run_detection(
             record.user_id,
             record.source_ip,
             record.destination_ip,
+            tenant_ids=tenant_ids
         )
         db.add(record)
         db.commit()
+
+    if record.device_id:
+        dev = db.query(Device).filter(Device.id == record.device_id).first()
+        if dev and dev.metadata_json.get("is_unmanaged", False):
+            # Unmanaged assets (Shadow IT) drop the ML detection to save compute
+            return DetectionResponse(
+                record_id=record.id,
+                risk_score=0.0,
+                ml_status="active",
+                alert_severity="none",
+                attack_detected=False,
+                attack_class="benign",
+                confidence=1.0,
+                explanation={"status": "ML bypassed for unmanaged asset"},
+            )
 
     ml_payload = _payload_from_record(record)
     db.close()
@@ -361,11 +402,20 @@ def packets_by_hour(
     packet_total = summary["packet_count_24h"]
     flow_total   = summary["flow_count_24h"]
 
-    # Calculate elapsed minutes based on actual data range, capped at 24*60
-    # This avoids the hardcoded 24*60 division that makes avg meaningless for fresh data
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     oldest_cutoff = now - timedelta(hours=24)
-    elapsed_minutes = max(1, int((now - oldest_cutoff).total_seconds() / 60))
+    
+    base_q = db.query(func.min(TrafficRecord.created_at)).filter(TrafficRecord.created_at >= oldest_cutoff)
+    if tenant_ids is not None:
+        base_q = base_q.filter(TrafficRecord.user_id.in_(tenant_ids))
+    
+    actual_oldest_val = base_q.scalar()
+    if actual_oldest_val:
+        actual_oldest_naive = actual_oldest_val.replace(tzinfo=None) if actual_oldest_val.tzinfo else actual_oldest_val
+        elapsed_minutes = max(1, int((now - actual_oldest_naive).total_seconds() / 60))
+    else:
+        elapsed_minutes = 1440
+
     avg_per_minute = int(packet_total / elapsed_minutes) if packet_total else 0
 
     peak_hour = summary["peak_hour"]

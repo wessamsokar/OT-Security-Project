@@ -53,28 +53,75 @@ _ML_SECURITY_STATUSES = frozenset({"under_attack", "suspicious"})
 
 
 def resolve_device_id_for_flow(
-    db: Session, user_id: int | None, source_ip: str, destination_ip: str
+    db: Session, user_id: int | None, source_ip: str, destination_ip: str, tenant_ids: list[int] | None = None
 ) -> int | None:
     """
-    Match TrafficRecord endpoints to Device.ip_address for the same owning user.
-    Prefers deterministic ordering by device id ascending when multiple patterns match.
+    Match TrafficRecord endpoints to Device.ip_address.
+    Prioritizes explicitly registered devices over auto-discovered (unmanaged) devices.
+    If no device matches and auto-discovery is enabled, creates Unmanaged Assets.
     """
     if user_id is None:
         return None
 
     sip, dip = source_ip.strip(), destination_ip.strip()
-    dev = (
-        db.query(Device)
-        .filter(
-            Device.user_id == user_id,
-            Device.is_active.is_(True),
-            Device.ip_address.isnot(None),
-            or_(Device.ip_address == sip, Device.ip_address == dip),
-        )
-        .order_by(Device.id.asc())
-        .first()
+    
+    query = db.query(Device).filter(
+        Device.is_active.is_(True),
+        Device.ip_address.isnot(None),
+        or_(Device.ip_address == sip, Device.ip_address == dip),
     )
-    return dev.id if dev else None
+    
+    # If tenant_ids is None, it means the caller has Admin privileges and can search all tenants.
+    # Otherwise, restrict to the provided tenant_ids.
+    if tenant_ids is not None:
+        query = query.filter(Device.user_id.in_(tenant_ids))
+    
+    devices = query.all()
+
+    def is_registered(d: Device) -> bool:
+        return not d.metadata_json.get("is_unmanaged", False)
+
+    registered_devices = [d for d in devices if is_registered(d)]
+    unmanaged_devices = [d for d in devices if not is_registered(d)]
+
+    if registered_devices:
+        registered_devices.sort(key=lambda d: d.id)
+        return registered_devices[0].id
+
+    if unmanaged_devices:
+        unmanaged_devices.sort(key=lambda d: d.id)
+        return unmanaged_devices[0].id
+
+    # No match found. Create Unmanaged Assets if auto-discovery is enabled.
+    settings = get_settings()
+    if getattr(settings, "auto_discovery_enabled", True):
+        # Create unmanaged devices for both IPs
+        src_dev = Device(
+            user_id=user_id,
+            name=f"Auto-Discovered Asset: {sip}",
+            ip_address=sip,
+            metadata_json={"is_unmanaged": True, "discovered_via": "traffic_ingest"},
+            operational_state="unknown",
+            monitoring_status="active",
+        )
+        db.add(src_dev)
+        
+        dst_dev = None
+        if sip != dip:
+            dst_dev = Device(
+                user_id=user_id,
+                name=f"Auto-Discovered Asset: {dip}",
+                ip_address=dip,
+                metadata_json={"is_unmanaged": True, "discovered_via": "traffic_ingest"},
+                operational_state="unknown",
+                monitoring_status="active",
+            )
+            db.add(dst_dev)
+
+        db.flush()  # to get IDs
+        return src_dev.id
+
+    return None
 
 
 def touch_device_last_traffic(

@@ -26,6 +26,14 @@ export type AuthUser = {
   role: UserRole;
   onboardingStatus: OnboardingStatus;
   permissions: PermissionCode[];
+  companyName?: string;
+  jobTitle?: string;
+  industryType?: string;
+  infrastructureType?: string;
+  estimatedDeviceCount?: number;
+  country?: string;
+  emailAlertsEnabled?: boolean;
+  defaultLandingPage?: string;
 };
 
 type MeApi = {
@@ -35,6 +43,14 @@ type MeApi = {
   role: string;
   onboarding_status: string;
   permissions?: PermissionCode[];
+  company_name?: string;
+  job_title?: string;
+  industry_type?: string;
+  infrastructure_type?: string;
+  estimated_device_count?: number;
+  country?: string;
+  email_alerts_enabled?: boolean;
+  default_landing_page?: string;
 };
 
 type AuthContextValue = {
@@ -102,7 +118,15 @@ function mapMe(data: MeApi): AuthUser {
     fullName: data.username,
     role: normalizeRole(data.role),
     onboardingStatus: normalizeOnboarding(data.onboarding_status),
-    permissions: data.permissions ?? []
+    permissions: data.permissions ?? [],
+    companyName: data.company_name,
+    jobTitle: data.job_title,
+    industryType: data.industry_type,
+    infrastructureType: data.infrastructure_type,
+    estimatedDeviceCount: data.estimated_device_count,
+    country: data.country,
+    emailAlertsEnabled: data.email_alerts_enabled,
+    defaultLandingPage: data.default_landing_page
   };
 }
 

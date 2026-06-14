@@ -10,10 +10,7 @@ import { securityDebug } from "../lib/securityDebug";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import type { PermissionCode } from "../types/auth";
 
-const ActiveThreatsPage = lazyWithRetry(
-  () => import("../pages/ActiveThreatsPage").then((m) => ({ default: m.ActiveThreatsPage })),
-  { retryKey: "active-threats" }
-);
+
 const AlertsPage = lazyWithRetry(
   () => import("../pages/AlertsPage").then((m) => ({ default: m.AlertsPage })),
   { retryKey: "alerts" }
@@ -46,10 +43,7 @@ const MlConfidencePage = lazyWithRetry(
   () => import("../pages/MlConfidencePage").then((m) => ({ default: m.MlConfidencePage })),
   { retryKey: "ml-confidence" }
 );
-const MttrPage = lazyWithRetry(
-  () => import("../pages/MttrPage").then((m) => ({ default: m.MttrPage })),
-  { retryKey: "mttr" }
-);
+
 const OtInventoryPage = lazyWithRetry(
   () => import("../pages/OtInventoryPage").then((m) => ({ default: m.OtInventoryPage })),
   { retryKey: "ot-inventory" }
@@ -61,10 +55,6 @@ const PacketsAnalysedPage = lazyWithRetry(
 const PendingVerificationPage = lazyWithRetry(
   () => import("../pages/PendingVerificationPage").then((m) => ({ default: m.PendingVerificationPage })),
   { retryKey: "pending-verification" }
-);
-const ProfilePage = lazyWithRetry(
-  () => import("../pages/ProfilePage").then((m) => ({ default: m.ProfilePage })),
-  { retryKey: "profile" }
 );
 const RegisterPage = lazyWithRetry(
   () => import("../pages/RegisterPage").then((m) => ({ default: m.RegisterPage })),
@@ -245,26 +235,8 @@ function AnimatedRoutes() {
             </PlatformFeatureRoute>
           )
         },
-        {
-          path: "active-threats",
-          element: (
-            <PlatformFeatureRoute>
-              <PermissionRoute permission="view_alerts">
-                <ActiveThreatsPage />
-              </PermissionRoute>
-            </PlatformFeatureRoute>
-          )
-        },
-        {
-          path: "mttr",
-          element: (
-            <PlatformFeatureRoute>
-              <PermissionRoute permission="view_alerts">
-                <MttrPage />
-              </PermissionRoute>
-            </PlatformFeatureRoute>
-          )
-        },
+
+
         {
           path: "ml-confidence",
           element: (
@@ -317,7 +289,6 @@ function AnimatedRoutes() {
           )
         },
         { path: "settings", element: <SettingsPrivacyPage /> },
-        { path: "profile", element: <ProfilePage /> },
         { path: "*", element: <Navigate to="/dashboard" replace /> }
       ]
     },

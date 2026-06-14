@@ -45,6 +45,10 @@ class User(Base):
     admin_approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+    # ─── User Preferences ───
+    email_alerts_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    default_landing_page: Mapped[str] = mapped_column(String(32), default="dashboard", nullable=False)
+
     # ─── OT onboarding / organization profile (filled at self-registration) ───
     onboarding_status: Mapped[OnboardingStatus] = mapped_column(
         SqlEnum(

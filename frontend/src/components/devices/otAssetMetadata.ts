@@ -257,7 +257,7 @@ export function resolveOperationalBadge(device: DeviceResponse): {
     case "recovering":
       return { label: "Recovering", className: "border-teal-500/40 bg-teal-500/15 text-teal-100 animate-pulse" };
     case "capture_enabled":
-      return { label: "Capture on", className: "border-violet-500/35 bg-violet-500/15 text-violet-100" };
+      return { label: "Capture on", className: "border-violet-500/40 bg-violet-500/20 text-violet-100 animate-pulse" };
     case "unknown":
     default:
       return { label: "No traffic", className: "border-slate-500/30 bg-slate-500/10 text-slate-300" };

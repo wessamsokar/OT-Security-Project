@@ -35,6 +35,7 @@ from app.services.email import (
     send_ot_onboarding_rejected_email,
 )
 from app.services.permissions import user_has_permission, user_is_admin
+from app.services.tenant import get_accessible_tenant_ids
 
 router = APIRouter(prefix="/users", tags=["users"])
 settings = get_settings()
@@ -126,6 +127,7 @@ def list_user_devices(
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[DeviceResponse]:
     _get_user_or_404(db, user_id)
+    get_accessible_tenant_ids(db, _user, requested_tenant_id=user_id)
     return (
         db.query(Device)
         .filter(Device.user_id == user_id)
@@ -143,6 +145,7 @@ def list_user_alerts(
     limit: int = Query(default=200, ge=1, le=500),
 ) -> list[AlertResponse]:
     _get_user_or_404(db, user_id)
+    get_accessible_tenant_ids(db, _user, requested_tenant_id=user_id)
     return (
         db.query(Alert)
         .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
@@ -161,6 +164,7 @@ def list_user_threats(
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[ActiveThreatResponse]:
     _get_user_or_404(db, user_id)
+    get_accessible_tenant_ids(db, _user, requested_tenant_id=user_id)
     rows = (
         db.query(Alert, TrafficRecord)
         .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
@@ -193,6 +197,7 @@ def list_user_incidents(
     limit: int = Query(default=200, ge=1, le=500),
 ) -> list[IncidentResponse]:
     _get_user_or_404(db, user_id)
+    get_accessible_tenant_ids(db, _user, requested_tenant_id=user_id)
     return (
         db.query(Incident)
         .join(Alert, Alert.id == Incident.alert_id)
@@ -212,6 +217,7 @@ def list_user_traffic(
     limit: int = Query(default=200, ge=1, le=500),
 ) -> list[TrafficRecordResponse]:
     _get_user_or_404(db, user_id)
+    get_accessible_tenant_ids(db, _user, requested_tenant_id=user_id)
     return (
         db.query(TrafficRecord)
         .filter(TrafficRecord.user_id == user_id)

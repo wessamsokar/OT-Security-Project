@@ -73,6 +73,7 @@ class Settings(BaseSettings):
 
     device_offline_after_minutes: int = 60
     device_recovery_timeout_minutes: int = 15
+    auto_discovery_enabled: bool = True
 
     @field_validator("smtp_username", "smtp_from_email", "smtp_host", mode="before")
     @classmethod

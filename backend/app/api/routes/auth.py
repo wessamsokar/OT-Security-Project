@@ -23,11 +23,17 @@ from app.schemas.auth import (
     RequestEmailVerificationRequest,
     ResetPasswordRequest,
     UserResponse,
+    UserProfileUpdate,
     VerifyEmailRequest,
 )
 from app.services.audit import record_audit
 from app.services.auth_tokens import consume_user_token, create_user_token, invalidate_user_tokens
-from app.services.email import send_password_reset_email, send_verification_email
+from app.services.email import (
+    send_password_reset_email,
+    send_verification_email,
+    send_verification_success_customer_email,
+    send_verification_success_activated_email,
+)
 from app.services.permissions import resolve_user_permissions
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -81,7 +87,7 @@ def register(
         estimated_device_count=payload.estimated_device_count,
         country=payload.country.strip(),
         purpose_of_access=payload.purpose_of_access.strip(),
-        operates_ot_ics=payload.operates_ot_ics,
+        operates_ot_ics=payload.operates_ot_ics,  # None for new registrations (field removed from form)
     )
     db.add(user)
     try:
@@ -126,6 +132,11 @@ def register(
     db.commit()
 
     background_tasks.add_task(send_verification_email, user.email, token)
+    logger.info(
+        "[REGISTER] user_id=%s email=%s — queued verification email only (token_type=email_verification)",
+        user.id,
+        user.email,
+    )
     return user
 
 
@@ -217,6 +228,52 @@ def me(
         if hasattr(current_user.onboarding_status, "value")
         else str(current_user.onboarding_status),
         permissions=perms,
+        company_name=current_user.company_name,
+        job_title=current_user.job_title,
+        industry_type=current_user.industry_type,
+        infrastructure_type=current_user.infrastructure_type,
+        estimated_device_count=current_user.estimated_device_count,
+        country=current_user.country,
+        email_alerts_enabled=current_user.email_alerts_enabled,
+        default_landing_page=current_user.default_landing_page,
+    )
+
+
+@router.put("/me", response_model=UserResponse)
+def update_me(
+    payload: UserProfileUpdate,
+    current_user: User = Depends(get_authenticated_user),
+    db: Session = Depends(get_db),
+) -> UserResponse:
+    if payload.full_name is not None:
+        current_user.username = payload.full_name
+    if payload.email_alerts_enabled is not None:
+        current_user.email_alerts_enabled = payload.email_alerts_enabled
+    if payload.default_landing_page is not None:
+        current_user.default_landing_page = payload.default_landing_page
+    db.commit()
+    db.refresh(current_user)
+    
+    perms = sorted(resolve_user_permissions(db, current_user))
+    return UserResponse(
+        id=current_user.id,
+        username=current_user.username,
+        email=current_user.email,
+        role=current_user.role,
+        is_email_verified=current_user.is_email_verified,
+        is_admin_approved=current_user.is_admin_approved,
+        onboarding_status=current_user.onboarding_status.value
+        if hasattr(current_user.onboarding_status, "value")
+        else str(current_user.onboarding_status),
+        permissions=perms,
+        company_name=current_user.company_name,
+        job_title=current_user.job_title,
+        industry_type=current_user.industry_type,
+        infrastructure_type=current_user.infrastructure_type,
+        estimated_device_count=current_user.estimated_device_count,
+        country=current_user.country,
+        email_alerts_enabled=current_user.email_alerts_enabled,
+        default_landing_page=current_user.default_landing_page,
     )
 
 
@@ -341,7 +398,12 @@ def request_email_verification(
 
 
 @router.post("/verify-email", response_model=MessageResponse)
-def verify_email(payload: VerifyEmailRequest, request: Request, db: Session = Depends(get_db)) -> MessageResponse:
+def verify_email(
+    payload: VerifyEmailRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> MessageResponse:
     auth_token = consume_user_token(db, payload.token, AuthTokenType.email_verification)
     if not auth_token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired token")
@@ -362,6 +424,28 @@ def verify_email(payload: VerifyEmailRequest, request: Request, db: Session = De
             
         record_audit(db, action="auth.verification.success", category="auth", actor=user, request=request)
         db.add(user)
+
+        if user.role == UserRole.customer:
+            background_tasks.add_task(
+                send_verification_success_customer_email,
+                user.email,
+                user.company_name,
+                user.username,
+            )
+            logger.info(
+                "[ONBOARDING] Queued post-verification email (Customer: pending approval) for %s",
+                user.email,
+            )
+        elif user.role in (UserRole.analyst, UserRole.viewer):
+            background_tasks.add_task(
+                send_verification_success_activated_email,
+                user.email,
+                user.username,
+            )
+            logger.info(
+                "[ONBOARDING] Queued post-verification email (Analyst/Viewer: activated) for %s",
+                user.email,
+            )
 
     db.commit()
     return MessageResponse(message="Email verified")

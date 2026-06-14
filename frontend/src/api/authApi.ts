@@ -11,6 +11,14 @@ type MeResponse = {
   is_admin_approved: boolean;
   onboarding_status: string;
   permissions?: PermissionCode[];
+  company_name?: string;
+  job_title?: string;
+  industry_type?: string;
+  infrastructure_type?: string;
+  estimated_device_count?: number;
+  country?: string;
+  email_alerts_enabled: boolean;
+  default_landing_page: string;
 };
 
 type FastApiValidationError = {
@@ -102,7 +110,15 @@ export async function loginUser(values: AuthFormValues): Promise<AuthApiResponse
         fullName: me.username,
         role: normalizeRole(me.role),
         onboardingStatus: normalizeMeOnboarding(me.onboarding_status),
-        permissions: me.permissions ?? []
+        permissions: me.permissions ?? [],
+        companyName: me.company_name,
+        jobTitle: me.job_title,
+        industryType: me.industry_type,
+        infrastructureType: me.infrastructure_type,
+        estimatedDeviceCount: me.estimated_device_count,
+        country: me.country,
+        emailAlertsEnabled: me.email_alerts_enabled,
+        defaultLandingPage: me.default_landing_page
       }
     };
   } catch (error) {
@@ -125,7 +141,6 @@ export async function registerUser(payload: OtRegisterPayload): Promise<void> {
     estimatedDeviceCount,
     country,
     purposeOfAccess,
-    operatesOtIcs,
     password
   } = payload;
 
@@ -153,7 +168,6 @@ export async function registerUser(payload: OtRegisterPayload): Promise<void> {
       estimated_device_count: estimatedDeviceCount,
       country: country.trim(),
       purpose_of_access: purposeOfAccess.trim(),
-      operates_ot_ics: operatesOtIcs,
       password
     });
   } catch (error) {
@@ -188,4 +202,16 @@ export async function requestEmailVerification(email: string): Promise<{ message
     email
   });
   return response.data;
+}
+
+export async function updateProfile(payload: {
+  full_name?: string;
+  email_alerts_enabled?: boolean;
+  default_landing_page?: string;
+}): Promise<void> {
+  try {
+    await apiClient.put("/v1/auth/me", payload);
+  } catch (error) {
+    throw parseApiError(error, "Unable to update profile right now.");
+  }
 }

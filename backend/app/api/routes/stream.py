@@ -53,7 +53,7 @@ def _extract_confidence(metrics: dict) -> float:
     return 0.0
 
 
-def _serialize_alert(alert: Alert) -> dict:
+def _serialize_alert(alert: Alert, user: User | None) -> dict:
     return {
         "id": alert.id,
         "traffic_record_id": alert.traffic_record_id,
@@ -61,6 +61,7 @@ def _serialize_alert(alert: Alert) -> dict:
         "status": alert.status.value,
         "summary": alert.summary,
         "created_at": alert.created_at.isoformat() if alert.created_at else None,
+        "tenant_name": (user.company_name or "Unknown Environment") if user else "Unknown Environment",
     }
 
 
@@ -68,12 +69,16 @@ def _build_snapshot(user: User, tenant_id: int | None = None) -> dict:
     db = SessionLocal()
     try:
         tenant_ids = get_accessible_tenant_ids(db, user, tenant_id)
-        alerts_query = db.query(Alert).join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
+        alerts_query = (
+            db.query(Alert, User)
+            .join(TrafficRecord, TrafficRecord.id == Alert.traffic_record_id)
+            .outerjoin(User, TrafficRecord.user_id == User.id)
+        )
 
         if tenant_ids is not None:
             alerts_query = alerts_query.filter(TrafficRecord.user_id.in_(tenant_ids))
 
-        alerts = alerts_query.order_by(Alert.created_at.desc()).limit(20).all()
+        rows = alerts_query.order_by(Alert.created_at.desc()).limit(200).all()
 
         dashboard = build_dashboard_summary(db, user, requested_tenant_id=tenant_id)
 
@@ -86,7 +91,7 @@ def _build_snapshot(user: User, tenant_id: int | None = None) -> dict:
         ml_confidence = _extract_confidence(active_model.metrics_json if active_model else {})
 
         return {
-            "alerts": [_serialize_alert(alert) for alert in alerts],
+            "alerts": [_serialize_alert(alert, u) for alert, u in rows],
             "dashboard": dashboard.model_dump(mode="json"),
             "ml_confidence": float(ml_confidence),
             "timestamp": datetime.now(timezone.utc).isoformat(),

@@ -41,7 +41,6 @@ export type OtRegisterPayload = {
   estimatedDeviceCount: number;
   country: string;
   purposeOfAccess: string;
-  operatesOtIcs: boolean;
   password: string;
 };
 
@@ -58,6 +57,14 @@ export type AuthApiResponse = {
     fullName?: string;
     role?: UserRole;
     onboardingStatus?: OnboardingStatus;
-    permissions?: PermissionCode[];
+    permissions: PermissionCode[];
+    companyName?: string;
+    jobTitle?: string;
+    industryType?: string;
+    infrastructureType?: string;
+    estimatedDeviceCount?: number;
+    country?: string;
+    emailAlertsEnabled?: boolean;
+    defaultLandingPage?: string;
   };
 };

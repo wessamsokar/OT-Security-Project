@@ -98,7 +98,7 @@ export const SocHealthOverview = memo(function SocHealthOverview({
           </div>
         </header>
 
-        <div className="grid gap-4 md:grid-cols-5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
           {Object.entries(STATUS_STYLES).map(([key, style]) => (
             <article key={key} className={`group relative overflow-hidden rounded-2xl border p-5 transition-all duration-300 hover:bg-opacity-20 ${style.bg}`}>
               <div className="flex flex-col gap-3">
@@ -118,7 +118,7 @@ export const SocHealthOverview = memo(function SocHealthOverview({
           ))}
         </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="group rounded-2xl border border-white/5 bg-white/[0.02] p-5 transition-colors duration-300 hover:bg-white/[0.04]">
             <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-muted">
               <Radar size={14} className="text-brand/70" />

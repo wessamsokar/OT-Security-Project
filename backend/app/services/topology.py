@@ -75,7 +75,7 @@ def _upsert_edge(
     if edge is None:
         metadata = metadata or {}
         if traffic_record_id:
-            metadata["processed_record_ids"] = [traffic_record_id]
+            metadata["last_traffic_record_id"] = traffic_record_id
         edge = TopologyEdge(
             user_id=user_id,
             source_device_id=source_id,
@@ -96,13 +96,17 @@ def _upsert_edge(
         return edge
 
     merged = dict(edge.metadata_json or {})
-    processed_ids = set(merged.get("processed_record_ids", []))
-    if traffic_record_id and traffic_record_id in processed_ids:
+    last_id = merged.get("last_traffic_record_id", 0)
+    
+    if traffic_record_id and traffic_record_id <= last_id:
         return edge
 
     if traffic_record_id:
-        processed_ids.add(traffic_record_id)
-        merged["processed_record_ids"] = list(processed_ids)
+        merged["last_traffic_record_id"] = traffic_record_id
+        # Clean up legacy array to instantly fix existing DB bloat
+        if "processed_record_ids" in merged:
+            del merged["processed_record_ids"]
+        
         edge.packet_count = int(edge.packet_count or 0) + max(0, packet_delta)
         edge.bytes_total = int(edge.bytes_total or 0) + max(0, bytes_delta)
 

@@ -194,6 +194,7 @@ def _build_branded_email(
     cta_label: str | None = None,
     action_url: str | None = None,
     cta_tip: str | None = None,
+    include_fallback: bool = True,
 ) -> str:
     header_html = _render_header(
         brand_title,
@@ -215,7 +216,7 @@ def _build_branded_email(
                 f"{_escape(cta_tip or 'Open the secure link above in your browser.')}"
                 "</p>"
             )
-            + _render_fallback_link(action_url)
+            + (_render_fallback_link(action_url) if include_fallback else "")
         )
 
     body_html = header_html + "".join(body_sections) + cta_html
@@ -334,6 +335,10 @@ def send_email(to_email: str, subject: str, body: str, html_body: str | None = N
 
 
 def send_verification_email(to_email: str, token: str) -> tuple[bool, str | None]:
+    logger.info(
+        "[EMAIL] type=verification recipient=%s token_type=email_verification",
+        to_email,
+    )
     settings = get_settings()
     brand = settings.smtp_from_name.strip() or settings.app_name.strip() or "ICS Guard"
     link = _build_action_link(settings.frontend_base_url, settings.email_verification_path, token)
@@ -586,6 +591,10 @@ def send_ot_onboarding_rejected_email(
 
 
 def send_password_reset_email(to_email: str, token: str) -> tuple[bool, str | None]:
+    logger.info(
+        "[EMAIL] type=password_reset recipient=%s token_type=password_reset",
+        to_email,
+    )
     settings = get_settings()
     brand = settings.smtp_from_name.strip() or settings.app_name.strip() or "ICS Guard"
     expire_min = settings.password_reset_token_expire_minutes
@@ -595,8 +604,7 @@ def send_password_reset_email(to_email: str, token: str) -> tuple[bool, str | No
     if link:
         plain = (
             f"{brand}\n\n"
-            "Use the secure link below to open our site and choose a new password.\n"
-            "Your reset token is not shown in this email — only the link carries it.\n\n"
+            "Use the secure link below to open our site and choose a new password.\n\n"
             f"{link}\n\n"
             f"This link expires in about {expire_min} minutes.\n"
             "If you did not request a reset, you can ignore this email."
@@ -606,7 +614,6 @@ def send_password_reset_email(to_email: str, token: str) -> tuple[bool, str | No
             headline="Reset your password",
             lead="We received a request to reset your password for your OT Sentinel account.",
             body_sections=[
-                _render_security_notice("We never expose security tokens in email content."),
                 _render_expiration_notice(expire_min),
             ],
             footer_text="Industrial OT security · If you did not request this message, you can safely ignore it.",
@@ -614,6 +621,7 @@ def send_password_reset_email(to_email: str, token: str) -> tuple[bool, str | No
             cta_label="Choose a new password",
             action_url=link,
             cta_tip="This link is single-use and expires shortly.",
+            include_fallback=False,
         )
     else:
         missing = (
@@ -628,6 +636,106 @@ def send_password_reset_email(to_email: str, token: str) -> tuple[bool, str | No
             body_sections=[_render_warning_banner(missing)],
             footer_text="Industrial OT security · If you did not request this message, you can safely ignore it.",
             preheader="Reset link unavailable.",
+        )
+
+    return send_email(to_email, subject, plain, html_body)
+
+
+def send_verification_success_customer_email(to_email: str, company_name: str, display_name: str) -> tuple[bool, str | None]:
+    """Email sent to Customers immediately after email verification (informs them of pending approval)."""
+    logger.info(
+        "[EMAIL] type=verification_success_pending recipient=%s token_type=none",
+        to_email,
+    )
+    settings = get_settings()
+    brand = settings.smtp_from_name.strip() or settings.app_name.strip() or "ICS Guard"
+    name = (display_name or "").strip() or "there"
+    org = (company_name or "").strip() or "your organization"
+    subject = f"{brand} — Email Verification Successful"
+
+    lead = (
+        f"Your email address has been verified successfully. Thank you for registering with {brand} on behalf of {org}. "
+        "Your access request is currently under review by our administrative team."
+    )
+
+    plain = (
+        f"{brand}\n\n"
+        f"Hello {name},\n\n"
+        f"{lead}\n\n"
+        "You will receive another notification once your account has been approved and provisioned.\n\n"
+        "— OT Sentinel Team"
+    )
+
+    html_body = _build_branded_email(
+        brand_title=brand,
+        headline="Verification Successful",
+        lead=lead,
+        body_sections=[
+            _render_greeting(name),
+            _render_security_notice(
+                "Your account is pending review. We will notify you via email as soon as an administrator approves your access."
+            ),
+        ],
+        footer_text="Industrial OT security onboarding · If you need immediate assistance, contact your SOC lead or support.",
+        preheader="Your email is verified. Account pending approval.",
+    )
+
+    return send_email(to_email, subject, plain, html_body)
+
+
+def send_verification_success_activated_email(to_email: str, display_name: str) -> tuple[bool, str | None]:
+    """Email sent to Analysts/Viewers immediately after email verification (informs them of instant activation)."""
+    logger.info(
+        "[EMAIL] type=verification_success_activated recipient=%s token_type=none",
+        to_email,
+    )
+    settings = get_settings()
+    brand = settings.smtp_from_name.strip() or settings.app_name.strip() or "ICS Guard"
+    name = (display_name or "").strip() or "there"
+    subject = f"{brand} — Welcome to OT Sentinel"
+    login_url = _frontend_login_url()
+
+    lead = "Your email address has been verified successfully. Your account has been activated automatically and is ready to use."
+
+    if login_url:
+        plain = (
+            f"{brand}\n\n"
+            f"Hello {name},\n\n"
+            f"{lead}\n\n"
+            f"Sign in: {login_url}\n\n"
+            "— OT Sentinel Team"
+        )
+        html_body = _build_branded_email(
+            brand_title=brand,
+            headline="Welcome to OT Sentinel",
+            lead=lead,
+            body_sections=[
+                _render_greeting(name),
+            ],
+            footer_text="Industrial OT security · Welcome to the platform.",
+            preheader="Your email is verified and your account is active.",
+            cta_label="Sign in",
+            action_url=login_url,
+            cta_tip="Use the button above to access your dashboard.",
+        )
+    else:
+        plain = (
+            f"{brand}\n\n"
+            f"Hello {name},\n\n"
+            f"{lead}\n\n"
+            "Open your organization's OT Sentinel gateway in the browser to sign in.\n\n"
+            "— OT Sentinel Team"
+        )
+        html_body = _build_branded_email(
+            brand_title=brand,
+            headline="Welcome to OT Sentinel",
+            lead=lead,
+            body_sections=[
+                _render_greeting(name),
+                _render_warning_banner("Sign-in URL is configured by your administrator. Open the gateway directly in your browser."),
+            ],
+            footer_text="Industrial OT security · Welcome to the platform.",
+            preheader="Your email is verified and your account is active.",
         )
 
     return send_email(to_email, subject, plain, html_body)

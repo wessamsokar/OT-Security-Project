@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchModelVersions, type ModelVersionResponse } from "../api/modelApi";
-import { connectAlertsStream } from "../api/streamApi";
 import { useTenant } from "../contexts/TenantContext";
 
 type FeatureWeight = {
@@ -56,10 +55,8 @@ function parseFeatureWeights(metrics: Record<string, unknown>): FeatureWeight[] 
 
 export function MlConfidencePage() {
   const [versions, setVersions] = useState<ModelVersionResponse[]>([]);
-  const [liveConfidence, setLiveConfidence] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { activeTenantId, canSelectTenant, assignedCustomers, isLoadingAssignments } = useTenant();
   const tenantId = canSelectTenant ? activeTenantId : undefined;
 
@@ -98,35 +95,8 @@ export function MlConfidencePage() {
 
     void load();
 
-    const stream = connectAlertsStream(
-      (snapshot) => {
-        if (!active) return;
-        if (errorTimerRef.current) {
-          clearTimeout(errorTimerRef.current);
-          errorTimerRef.current = null;
-        }
-        setLiveConfidence(snapshot.ml_confidence);
-        setError("");
-      },
-      () => {
-        if (!active) return;
-        if (errorTimerRef.current) return;
-        errorTimerRef.current = setTimeout(() => {
-          setError("Live stream disconnected. Showing latest model confidence.");
-          errorTimerRef.current = null;
-        }, 8000); // 8s grace period absorbs normal server-side reconnects
-      },
-      tenantId,
-      { lazy: true, visibilityAware: true }
-    );
-
     return () => {
       active = false;
-      if (errorTimerRef.current) {
-        clearTimeout(errorTimerRef.current);
-        errorTimerRef.current = null;
-      }
-      stream?.close();
     };
   }, [tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
 
@@ -135,7 +105,7 @@ export function MlConfidencePage() {
   }, [versions]);
 
   const metrics = activeVersion?.metrics_json ?? {};
-  const confidence = liveConfidence ?? parseConfidence(metrics);
+  const confidence = parseConfidence(metrics);
   const features = parseFeatureWeights(metrics);
   const normalizer = features.length
     ? Math.max(...features.map((feature) => (feature.weight > 1 ? feature.weight : feature.weight * 100)))

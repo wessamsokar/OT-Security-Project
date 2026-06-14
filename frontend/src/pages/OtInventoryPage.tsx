@@ -60,11 +60,11 @@ function TopologyContent() {
       const b = map.get(edge.target_device_id);
       if (a) {
         a.volume += edge.packet_count;
-        a.connected.push(edge.target_device_id);
+        if (!a.connected.includes(edge.target_device_id)) a.connected.push(edge.target_device_id);
       }
       if (b) {
         b.volume += edge.packet_count;
-        b.connected.push(edge.source_device_id);
+        if (!b.connected.includes(edge.source_device_id)) b.connected.push(edge.source_device_id);
       }
     });
     return map;
@@ -168,7 +168,7 @@ function TopologyContent() {
             </tr>
           </thead>
           <tbody>
-            {devices.map((device) => {
+            {!isGlobal && devices.map((device) => {
               const badge = resolveOperationalBadge(device);
               const stats = edgeStats.get(device.id);
               const connected = stats?.connected ?? [];
@@ -227,10 +227,17 @@ function TopologyContent() {
                 </tr>
               );
             })}
-            {!loading && !devices.length ? (
+            {!loading && !devices.length && !isGlobal ? (
               <tr className="border-t border-white/10">
                 <td className="px-4 py-3 text-muted" colSpan={7}>
                   No monitored traffic sources yet. Register one to begin OT telemetry ingestion.
+                </td>
+              </tr>
+            ) : null}
+            {!loading && isGlobal ? (
+              <tr className="border-t border-white/10">
+                <td className="px-4 py-3 text-center text-muted" colSpan={7}>
+                  Global view active. Please select a customer environment to view inventory list.
                 </td>
               </tr>
             ) : null}

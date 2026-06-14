@@ -24,18 +24,6 @@ export function TenantSelector() {
     ? assignedCustomers.filter((c) => c.role === "customer")
     : assignedCustomers;
 
-  const badgeClass = (id?: number) => {
-    const palette = [
-      "bg-emerald-500/15 text-emerald-100 border-emerald-500/30",
-      "bg-cyan-500/15 text-cyan-100 border-cyan-500/30",
-      "bg-amber-500/15 text-amber-100 border-amber-500/30",
-      "bg-violet-500/15 text-violet-100 border-violet-500/30",
-      "bg-rose-500/15 text-rose-100 border-rose-500/30"
-    ];
-    if (id == null) return palette[0];
-    return palette[id % palette.length];
-  };
-
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -74,14 +62,13 @@ export function TenantSelector() {
     const single = customerOptions[0];
     return (
       <div className="mt-4 flex items-center justify-between gap-2 rounded-xl border border-brand/20 bg-brand/5 p-2 px-3">
-        <Building size={14} className="text-brand" />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-xs font-medium text-white">{single.company_name || single.username}</span>
-          <span className="truncate text-[10px] text-muted">Active Customer Scope</span>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <Building size={14} className="text-brand shrink-0" />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="w-full break-words whitespace-normal text-left text-xs font-medium text-white">{single.company_name || single.username}</span>
+            <span className="w-full break-words whitespace-normal text-left text-[10px] text-muted">Active Customer Scope</span>
+          </div>
         </div>
-        <span className={`rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.16em] ${badgeClass(single.id)}`}>
-          Customer
-        </span>
       </div>
     );
   }
@@ -98,28 +85,21 @@ export function TenantSelector() {
         whileTap={{ scale: 0.98 }}
         className="flex w-full items-center justify-between gap-2 rounded-xl border border-white/10 bg-panel/60 p-2 pl-3 transition hover:bg-white/5"
       >
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <Building size={14} className="text-brand shrink-0" />
-          <div className="flex flex-col items-start min-w-0">
-            <span className="truncate text-xs font-semibold text-white max-w-[150px]">
+          <div className="flex min-w-0 flex-1 flex-col items-start">
+            <span className="w-full break-words whitespace-normal text-left text-xs font-semibold text-white">
               {isGlobal
                 ? "Global View"
                 : activeCustomer?.company_name || activeCustomer?.username || "Select Customer"}
             </span>
-            <span className="text-[10px] text-muted">
+            <span className="w-full break-words whitespace-normal text-left text-[10px] text-muted">
               {isGlobal ? "All Customers" : "Customer Scope"}
               {isSwitchingTenant ? " · Switching" : ""}
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span
-            className={`rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.16em] ${
-              isGlobal ? "bg-white/10 text-white border-white/20" : badgeClass(activeCustomer?.id)
-            }`}
-          >
-            {isGlobal ? "Platform" : "Customer"}
-          </span>
+        <div className="flex shrink-0 items-center gap-2">
           <ChevronDown size={14} className={`text-muted transition-transform ${isOpen ? "rotate-180" : ""}`} />
         </div>
       </motion.button>
@@ -171,9 +151,6 @@ export function TenantSelector() {
                   </span>
                   <span className="block text-xs text-muted/80 truncate">{customer.email}</span>
                 </div>
-                <span className="ml-2 shrink-0 self-center rounded border border-brand/30 bg-brand/10 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-brand">
-                  Customer
-                </span>
               </button>
             ))
           )}

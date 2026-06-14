@@ -13,12 +13,15 @@ import { navItemVisibleForRole, navItemVisibleWhenPending, PUBLIC_NAV_ITEMS, TOP
 function getUserDisplayName(fullNameRaw?: string) {
   const fullName = fullNameRaw?.trim() ?? "";
   const parts = fullName.split(/\s+/).filter(Boolean);
+  
+  const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
   if (parts.length >= 2) {
-    return `${parts[0]} ${parts[1]}`;
+    return `${capitalize(parts[0])} ${capitalize(parts[1])}`;
   }
 
   if (parts.length === 1) {
-    return `${parts[0]} Analyst`;
+    return `${capitalize(parts[0])} Analyst`;
   }
 
   return "Security Analyst";
@@ -170,7 +173,7 @@ export function Navbar({ onNavItemClick, onSidebarToggle, isSidebarOpen = false 
                 }}
                 whileTap={{ scale: 0.97 }}
               >
-                <Link to="/dashboard/profile">
+                <Link to="/dashboard/settings">
                   <Button variant="ghost" size="sm">
                     {displayName}
                   </Button>

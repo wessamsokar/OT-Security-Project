@@ -291,7 +291,14 @@ export function DevicesPage() {
 
               return (
                 <tr key={device.id} className="border-t border-white/10">
-                  <td className="px-4 py-3 text-white">{device.name}</td>
+                  <td className="px-4 py-3">
+                    <div className="text-white">{device.name}</div>
+                    {!tenantId && device.tenant_name ? (
+                      <div className="mt-1 inline-block rounded bg-brand/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-brand">
+                        {device.tenant_name}
+                      </div>
+                    ) : null}
+                  </td>
                   <td className="px-4 py-3 text-muted">{device.device_type ?? "-"}</td>
                   <td className="px-4 py-3 text-muted">
                     {device.ip_address ?? "-"}{" "}
@@ -305,9 +312,10 @@ export function DevicesPage() {
                   <td className="px-4 py-3">
                     <span
                       className={[
-                        "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium",
+                        "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium cursor-help",
                         opBadge.className
                       ].join(" ")}
+                      title="Online: Device telemetry recently observed. Offline: No telemetry received within the configured threshold."
                     >
                       {opBadge.label}
                     </span>

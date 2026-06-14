@@ -53,16 +53,15 @@ def list_devices(
     tenant_id: int | None = Query(default=None),
 ) -> list[DeviceResponse]:
     tenant_ids = get_accessible_tenant_ids(db, current_user, tenant_id)
-    mark_stale_devices_offline(db, tenant_ids=tenant_ids)
-    resolve_stale_attacks_sweep(db, tenant_ids=tenant_ids)
-    db.commit()
     query = db.query(Device).options(joinedload(Device.owner))
     if tenant_ids is not None:
         query = query.filter(Device.user_id.in_(tenant_ids))
     devices = query.order_by(Device.created_at.desc()).all()
+    
+    # Calculate state purely in-memory for serialization without DB lock contention
     for device in devices:
         refresh_device_operational_state(device)
-    db.commit()
+        
     return devices
 
 
@@ -72,16 +71,19 @@ def list_my_devices(
     current_user: User = Depends(require_permission("view_devices")),
 ) -> list[DeviceResponse]:
     # list_my_devices is strictly for the logged in user
-    mark_stale_devices_offline(db, tenant_ids=[current_user.id])
-    resolve_stale_attacks_sweep(db, tenant_ids=[current_user.id])
-    db.commit()
-    return (
+    devices = (
         db.query(Device)
         .options(joinedload(Device.owner))
         .filter(Device.user_id == current_user.id)
         .order_by(Device.created_at.desc())
         .all()
     )
+    
+    # Calculate state purely in-memory for serialization
+    for device in devices:
+        refresh_device_operational_state(device)
+        
+    return devices
 
 
 @router.post("", response_model=DeviceResponse, status_code=status.HTTP_201_CREATED)

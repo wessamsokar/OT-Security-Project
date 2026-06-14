@@ -123,8 +123,8 @@ def derive_operational_state(device: Device, *, now: datetime | None = None) -> 
     if stale or device.monitoring_status == "offline":
         return OPERATIONAL_OFFLINE
 
-    # Priority 5: Fresh telemetry → ONLINE (or CAPTURE overlay)
-    return OPERATIONAL_CAPTURE if capture_on else OPERATIONAL_ONLINE
+    # Priority 5: Fresh telemetry → ONLINE
+    return OPERATIONAL_ONLINE
 
 
 def refresh_device_operational_state(

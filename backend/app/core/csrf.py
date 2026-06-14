@@ -49,6 +49,13 @@ def requires_csrf_validation(request: Request) -> bool:
     settings = get_settings()
     if not settings.csrf_protection_enabled:
         return False
+    
+    # API requests using Bearer tokens are immune to CSRF 
+    # (unlike cookie-based browser sessions)
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        return False
+
     return not is_csrf_exempt(request)
 
 

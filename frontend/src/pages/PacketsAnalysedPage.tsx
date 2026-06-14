@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Info } from "lucide-react";
 
 import { fetchPacketsByHour, type PacketsByHourResponse } from "../api/phase2Api";
 import { useTenant } from "../contexts/TenantContext";
@@ -94,12 +95,22 @@ export function PacketsAnalysedPage() {
 
       <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-4">
         <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <p className="text-xs text-muted">Network Packets (24h)</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-xs text-muted">Network Packets (24h)</p>
+            <span title="Total packets reported across all flow records." className="cursor-help text-muted transition hover:text-white">
+              <Info size={12} />
+            </span>
+          </div>
           <p className="mt-2 text-3xl font-semibold text-white">{packetTotal.toLocaleString()}</p>
           <p className="mt-1 text-xs text-muted">SUM of TrafficRecord.packet_count</p>
         </article>
         <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <p className="text-xs text-muted">Flow Records (24h)</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-xs text-muted">Flow Records (24h)</p>
+            <span title="Number of telemetry flow records ingested." className="cursor-help text-muted transition hover:text-white">
+              <Info size={12} />
+            </span>
+          </div>
           <p className="mt-2 text-3xl font-semibold text-white">{flowTotal.toLocaleString()}</p>
           <p className="mt-1 text-xs text-muted">COUNT of telemetry rows</p>
         </article>
@@ -120,14 +131,8 @@ export function PacketsAnalysedPage() {
           <thead className="bg-white/5 text-muted">
             <tr>
               <th className="px-4 py-3">Hour (UTC)</th>
-              <th className="px-4 py-3 text-right">
-                Network Packets
-                <span className="ml-1 font-normal opacity-60">(SUM)</span>
-              </th>
-              <th className="px-4 py-3 text-right">
-                Flow Records
-                <span className="ml-1 font-normal opacity-60">(COUNT)</span>
-              </th>
+              <th className="px-4 py-3 text-right">Flows</th>
+              <th className="px-4 py-3 text-right">Packets</th>
               <th className="px-4 py-3">Dominant Protocol</th>
             </tr>
           </thead>
@@ -135,8 +140,8 @@ export function PacketsAnalysedPage() {
             {rows.map((row) => (
               <tr key={row.hour} className="border-t border-white/10">
                 <td className="px-4 py-3 text-white">{row.hour}</td>
-                <td className="px-4 py-3 text-right text-muted">{row.packets.toLocaleString()}</td>
                 <td className="px-4 py-3 text-right text-muted">{(row.flow_count ?? 0).toLocaleString()}</td>
+                <td className="px-4 py-3 text-right text-muted">{row.packets.toLocaleString()}</td>
                 <td className="px-4 py-3 text-muted">{row.dominant_protocol}</td>
               </tr>
             ))}

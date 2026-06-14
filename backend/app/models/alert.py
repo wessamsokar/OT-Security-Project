@@ -22,6 +22,7 @@ class AlertStatus(str, Enum):
 
 class Alert(Base):
     __tablename__ = "alerts"
+    __allow_unmapped__ = True
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     traffic_record_id: Mapped[int] = mapped_column(ForeignKey("traffic_records.id"), nullable=False)
@@ -30,10 +31,15 @@ class Alert(Base):
     summary: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+    _tenant_name: str | None = None
+
     @property
     def tenant_name(self) -> str | None:
         # Avoid direct DB queries in properties if possible.
         # But we need access to the traffic_record -> user -> name.
-        # Let's see if we can do this without causing N+1 implicitly if not joined.
-        # Since Alert doesn't have a direct relationship to User, we can manually populate it in the route.
-        return None
+        # Since Alert doesn't have a direct relationship to User, we manually populate it in the route.
+        return self._tenant_name
+
+    @tenant_name.setter
+    def tenant_name(self, value: str | None) -> None:
+        self._tenant_name = value

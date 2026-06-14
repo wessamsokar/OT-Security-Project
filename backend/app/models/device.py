@@ -42,5 +42,5 @@ class Device(Base):
     @property
     def tenant_name(self) -> str | None:
         if self.owner:
-            return self.owner.company_name or self.owner.username
+            return self.owner.company_name or "Unknown Environment"
         return None

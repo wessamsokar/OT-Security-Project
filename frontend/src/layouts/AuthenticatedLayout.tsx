@@ -2,8 +2,6 @@ import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-
-import { Logo } from "../components/layout/Logo";
 import { Navbar } from "../components/layout/Navbar";
 import { TenantSelector } from "../components/layout/TenantSelector";
 import { AccessRejectedPage } from "../pages/AccessRejectedPage";
@@ -107,7 +105,6 @@ export function AuthenticatedLayout() {
 						>
 							<div className="flex items-center justify-between gap-2">
 								<div className="flex items-center gap-2">
-									<Logo withText={false} />
 									<motion.div whileHover={{ scale: 1.02 }} transition={{ duration: 0.18 }}>
 										<motion.p
 											className="text-xs uppercase tracking-[0.14em] text-brand"

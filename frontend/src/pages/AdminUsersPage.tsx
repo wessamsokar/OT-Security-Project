@@ -811,10 +811,6 @@ export function AdminUsersPage() {
                   ["Infrastructure", reviewUser.infrastructure_type ?? "—"],
                   ["Est. devices", reviewUser.estimated_device_count != null ? String(reviewUser.estimated_device_count) : "—"],
                   ["Country", reviewUser.country ?? "—"],
-                  [
-                    "Operates OT/ICS",
-                    reviewUser.operates_ot_ics === true ? "Yes" : reviewUser.operates_ot_ics === false ? "No" : "—"
-                  ],
                   ["Registered", new Date(reviewUser.created_at).toLocaleString()],
                   ["Role", reviewUser.role]
                 ].map(([k, v]) => (

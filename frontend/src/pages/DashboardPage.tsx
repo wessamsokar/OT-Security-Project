@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { Info, X } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { fetchAlerts, fetchDashboardSummary, type AlertResponse, type DashboardSummary } from "../api/alertsApi";
@@ -8,9 +8,11 @@ import {
   fetchActiveThreats,
   fetchPacketsByHour,
   fetchSocHealth,
+  fetchMttr,
   type ActiveThreat,
   type PacketsByHourResponse,
-  type SocHealthPayload
+  type SocHealthPayload,
+  type MttrSummary
 } from "../api/phase2Api";
 import { fetchUsers } from "../api/usersApi";
 import { connectAlertsStream } from "../api/streamApi";
@@ -35,16 +37,25 @@ function StatCard({
   label,
   value,
   hint,
-  accent
+  accent,
+  tooltip
 }: {
   label: string;
   value: string | number;
   hint?: string;
   accent?: string;
+  tooltip?: string;
 }) {
   return (
     <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
-      <p className="text-xs uppercase tracking-wide text-muted">{label}</p>
+      <div className="flex items-center gap-1.5">
+        <p className="text-xs uppercase tracking-wide text-muted">{label}</p>
+        {tooltip ? (
+          <span title={tooltip} className="cursor-help text-muted transition hover:text-white">
+            <Info size={12} />
+          </span>
+        ) : null}
+      </div>
       <p className={`mt-2 text-3xl font-semibold ${accent ?? "text-white"}`}>{value}</p>
       {hint ? <p className="mt-1 text-xs text-muted">{hint}</p> : null}
     </article>
@@ -69,6 +80,7 @@ export function DashboardPage() {
   const [activeThreats, setActiveThreats] = useState<ActiveThreat[]>([]);
   const [packets, setPackets] = useState<PacketsByHourResponse | null>(null);
   const [socHealth, setSocHealth] = useState<SocHealthPayload | null>(null);
+  const [mttr, setMttr] = useState<MttrSummary | null>(null);
   const [devices, setDevices] = useState<DeviceResponse[]>([]);
   const [adminUsers, setAdminUsers] = useState(0);
   const [pendingOnboarding, setPendingOnboarding] = useState(0);
@@ -81,6 +93,7 @@ export function DashboardPage() {
   const [devicesLoading, setDevicesLoading] = useState(false);
   const [adminLoading, setAdminLoading] = useState(false);
   const [socLoading, setSocLoading] = useState(false);
+  const [mttrLoading, setMttrLoading] = useState(false);
 
   const [summaryError, setSummaryError] = useState("");
   const [alertsError, setAlertsError] = useState("");
@@ -89,6 +102,7 @@ export function DashboardPage() {
   const [devicesError, setDevicesError] = useState("");
   const [adminError, setAdminError] = useState("");
   const [socError, setSocError] = useState("");
+  const [mttrError, setMttrError] = useState("");
   const alertsErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { user, hasPermission } = useAuth();
@@ -98,7 +112,8 @@ export function DashboardPage() {
   const tenantId = (role === "analyst" || role === "viewer") ? activeTenantId : undefined;
   const roleLabel = role.replace(/^\w/, (char) => char.toUpperCase());
   const welcomeName = user?.fullName ?? "Operator";
-  const firstName = welcomeName.split(" ")[0] ?? "Operator";
+  const rawFirstName = user?.fullName?.split(" ")[0] || user?.email?.split("@")[0] || "User";
+  const firstName = rawFirstName.charAt(0).toUpperCase() + rawFirstName.slice(1);
 
   const canViewDashboard = hasPermission("view_dashboard");
   const canViewAlerts = hasPermission("view_alerts");
@@ -114,6 +129,7 @@ export function DashboardPage() {
   const needsDevices = canViewDevices && (role === "admin" || role === "viewer" || role === "customer");
   const needsUsers = canViewUsers && role === "admin";
   const needsSocHealth = canViewSocHealth && role === "admin";
+  const needsMttr = (role === "admin" || role === "analyst");
 
   useEffect(() => {
     // Only warn about empty assignments for non-admin roles
@@ -132,54 +148,110 @@ export function DashboardPage() {
       setPacketsError(message);
       setDevicesError(message);
       setSocError(message);
+      setMttrError(message);
     }
   }, [isAdmin, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
 
     useEffect(() => {
       let active = true;
-      if (!needsSummary) return;
+      // Wait for tenant context to fully resolve before fetching anything
       if (!isAdmin && canSelectTenant && (isLoadingAssignments || !tenantId || assignedCustomers.length === 0)) return;
-      setSummaryLoading(true);
-      const load = async () => {
+
+      const loadAll = async () => {
+        if (needsSummary) setSummaryLoading(true);
+        if (needsAlertsList) setAlertsLoading(true);
+        if (needsThreats) setThreatsLoading(true);
+        if (needsPackets) setPacketsLoading(true);
+        if (needsDevices) setDevicesLoading(true);
+        if (needsUsers) setAdminLoading(true);
+        if (needsSocHealth) setSocLoading(true);
+        if (needsMttr) setMttrLoading(true);
+
+        const promises = [];
+
+        if (needsSummary) {
+          promises.push(
+            fetchDashboardSummary(tenantId)
+              .then((data) => { if (active) { setSummary(data); setSummaryError(""); setSummaryLoading(false); } })
+              .catch((err) => { if (active) { setSummaryError(err.message); setSummaryLoading(false); } })
+          );
+        }
+
+        if (needsThreats) {
+          promises.push(
+            fetchActiveThreats(tenantId)
+              .then((data) => { if (active) { setActiveThreats(data); setThreatsError(""); setThreatsLoading(false); } })
+              .catch((err) => { if (active) { setThreatsError(err.message); setThreatsLoading(false); } })
+          );
+        }
+
+        if (needsPackets) {
+          promises.push(
+            fetchPacketsByHour(tenantId)
+              .then((data) => { if (active) { setPackets(data); setPacketsError(""); setPacketsLoading(false); } })
+              .catch((err) => { if (active) { setPacketsError(err.message); setPacketsLoading(false); } })
+          );
+        }
+
+        if (needsDevices) {
+          promises.push(
+            fetchDevices(tenantId)
+              .then((data) => { if (active) { setDevices(data); setDevicesError(""); setDevicesLoading(false); } })
+              .catch((err) => { if (active) { setDevicesError(err.message); setDevicesLoading(false); } })
+          );
+        }
+
+        if (needsUsers) {
+          promises.push(
+            fetchUsers()
+              .then((data) => {
+                if (active) {
+                  setAdminUsers(data.length);
+                  setPendingOnboarding(data.filter((row: any) => row.onboarding_status === "pending").length);
+                  setAdminError("");
+                  setAdminLoading(false);
+                }
+              })
+              .catch((err) => { if (active) { setAdminError(err.message); setAdminLoading(false); } })
+          );
+        }
+
+        if (needsSocHealth) {
+          promises.push(
+            fetchSocHealth(tenantId)
+              .then((data) => { if (active) { setSocHealth(data); setSocError(""); setSocLoading(false); } })
+              .catch((err) => { if (active) { setSocError(err.message); setSocLoading(false); } })
+          );
+        }
+
+        if (needsMttr) {
+          promises.push(
+            fetchMttr()
+              .then((data) => { if (active) { setMttr(data); setMttrError(""); setMttrLoading(false); } })
+              .catch((err) => { if (active) { setMttrError(err.message); setMttrLoading(false); } })
+          );
+        }
+
         try {
-          const dashboardData = await fetchDashboardSummary(tenantId);
-          if (!active) return;
-          setSummary(dashboardData);
-          setSummaryError("");
+          await Promise.all(promises);
         } catch (err) {
-          if (!active) return;
-          setSummaryError(err instanceof Error ? err.message : "Unable to load dashboard metrics right now.");
-        } finally {
-          if (active) setSummaryLoading(false);
+          console.error("Dashboard fetch error:", err);
         }
       };
-      void load();
-      return () => {
-        active = false;
-      };
-    }, [needsSummary, tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
+
+      void loadAll();
+
+      return () => { active = false; };
+    }, [
+      tenantId, isAdmin, canSelectTenant, isLoadingAssignments, assignedCustomers.length,
+      needsSummary, needsAlertsList, needsThreats, needsPackets, needsDevices, needsUsers, needsSocHealth, needsMttr
+    ]);
 
     useEffect(() => {
       let active = true;
       if (!needsAlertsList) return;
       if (!isAdmin && canSelectTenant && (isLoadingAssignments || !tenantId || assignedCustomers.length === 0)) return;
-      setAlertsLoading(true);
-      const load = async () => {
-        try {
-          const rows = await fetchAlerts(tenantId);
-          if (!active) return;
-          setAlerts(rows);
-          setAlertsError("");
-        } catch (err) {
-          if (!active) return;
-          setAlertsError(err instanceof Error ? err.message : "Unable to load alerts right now.");
-        } finally {
-          if (active) setAlertsLoading(false);
-        }
-      };
-      void load();
 
-      // Use lazy SSE initialization to avoid blocking initial render
       const stream = connectAlertsStream(
         (snapshot) => {
           if (!active) return;
@@ -214,127 +286,7 @@ export function DashboardPage() {
         }
         stream?.close();
       };
-    }, [needsAlertsList, needsSummary, tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
-
-    useEffect(() => {
-      let active = true;
-      if (!needsThreats) return;
-      if (!isAdmin && canSelectTenant && (isLoadingAssignments || !tenantId || assignedCustomers.length === 0)) return;
-      setThreatsLoading(true);
-      const load = async () => {
-        try {
-          const rows = await fetchActiveThreats(tenantId);
-          if (!active) return;
-          setActiveThreats(rows);
-          setThreatsError("");
-        } catch (err) {
-          if (!active) return;
-          setThreatsError(err instanceof Error ? err.message : "Unable to load active threats.");
-        } finally {
-          if (active) setThreatsLoading(false);
-        }
-      };
-      void load();
-      return () => {
-        active = false;
-      };
-    }, [needsThreats, tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
-
-    useEffect(() => {
-      let active = true;
-      if (!needsPackets) return;
-      if (!isAdmin && canSelectTenant && (isLoadingAssignments || !tenantId || assignedCustomers.length === 0)) return;
-      setPacketsLoading(true);
-      const load = async () => {
-        try {
-          const data = await fetchPacketsByHour(tenantId);
-          if (!active) return;
-          setPackets(data);
-          setPacketsError("");
-        } catch (err) {
-          if (!active) return;
-          setPacketsError(err instanceof Error ? err.message : "Unable to load telemetry trends.");
-        } finally {
-          if (active) setPacketsLoading(false);
-        }
-      };
-      void load();
-      return () => {
-        active = false;
-      };
-    }, [needsPackets, tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
-
-    useEffect(() => {
-      let active = true;
-      if (!needsDevices) return;
-      if (!isAdmin && canSelectTenant && (isLoadingAssignments || !tenantId || assignedCustomers.length === 0)) return;
-      setDevicesLoading(true);
-      const load = async () => {
-        try {
-          const rows = await fetchDevices(tenantId);
-          if (!active) return;
-          setDevices(rows);
-          setDevicesError("");
-        } catch (err) {
-          if (!active) return;
-          setDevicesError(err instanceof Error ? err.message : "Unable to load device inventory.");
-        } finally {
-          if (active) setDevicesLoading(false);
-        }
-      };
-      void load();
-      return () => {
-        active = false;
-      };
-    }, [needsDevices, tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
-
-    useEffect(() => {
-      let active = true;
-      if (!needsUsers) return;
-      setAdminLoading(true);
-      const load = async () => {
-        try {
-          const rows = await fetchUsers();
-          if (!active) return;
-          setAdminUsers(rows.length);
-          setPendingOnboarding(rows.filter((row) => row.onboarding_status === "pending").length);
-          setAdminError("");
-        } catch (err) {
-          if (!active) return;
-          setAdminError(err instanceof Error ? err.message : "Unable to load admin overview.");
-        } finally {
-          if (active) setAdminLoading(false);
-        }
-      };
-      void load();
-      return () => {
-        active = false;
-      };
-    }, [needsUsers]);
-
-    useEffect(() => {
-      let active = true;
-      if (!needsSocHealth) return;
-      if (!isAdmin && canSelectTenant && (isLoadingAssignments || !tenantId || assignedCustomers.length === 0)) return;
-      setSocLoading(true);
-      const load = async () => {
-        try {
-          const data = await fetchSocHealth(tenantId);
-          if (!active) return;
-          setSocHealth(data);
-          setSocError("");
-        } catch (err) {
-          if (!active) return;
-          setSocError(err instanceof Error ? err.message : "Unable to load system health.");
-        } finally {
-          if (active) setSocLoading(false);
-        }
-      };
-      void load();
-      return () => {
-        active = false;
-      };
-    }, [needsSocHealth, tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length]);
+    }, [needsAlertsList, needsSummary, tenantId, canSelectTenant, isLoadingAssignments, assignedCustomers.length, isAdmin]);
 
     /**
      * Metric separation:
@@ -352,6 +304,8 @@ export function DashboardPage() {
     const meanRiskPct = ((summary?.avg_risk_score ?? 0) * 100).toFixed(1);
     const highAlerts = alerts.filter((item) => item.severity === "critical" || item.severity === "high").length;
     const deviceActiveCount = devices.filter((d) => d.is_active && d.monitoring_status === "active").length;
+    const deviceOnlineCount = devices.filter((d) => d.operational_state === "online").length;
+    const deviceOfflineCount = devices.filter((d) => d.operational_state === "offline").length;
     const deviceCoverage = devices.length ? Math.round((deviceActiveCount / devices.length) * 100) : 0;
     const protocolMix = useMemo(() => {
       if (!packets?.rows) return [] as Array<{ label: string; value: number }>;
@@ -433,8 +387,10 @@ export function DashboardPage() {
             {adminError ? <p className="text-sm text-danger">{adminError}</p> : null}
             {socLoading ? <p className="text-sm text-muted">Loading system health...</p> : null}
             {socError ? <p className="text-sm text-danger">{socError}</p> : null}
+            {mttrLoading ? <p className="text-sm text-muted">Loading MTTR...</p> : null}
+            {mttrError ? <p className="text-sm text-danger">{mttrError}</p> : null}
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4">
               <StatCard label="Total users" value={adminUsers.toLocaleString()} />
               <StatCard label="Active devices" value={devices.length.toLocaleString()} />
               <StatCard label="Onboarding requests" value={pendingOnboarding} accent="text-amber-200" />
@@ -442,6 +398,7 @@ export function DashboardPage() {
               <StatCard label="Open incidents" value={summary?.incidents_open ?? 0} />
               <StatCard label="Alerts (all time)" value={totalAlertsAllTime} />
               <StatCard label="Avg risk" value={`${meanRiskPct}%`} />
+              <StatCard label="Avg MTTR" value={mttr?.average_mttr_minutes ? `${mttr.average_mttr_minutes}m` : "—"} />
             </div>
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_1.4fr]">
@@ -457,9 +414,6 @@ export function DashboardPage() {
                   ) : null}
                   {canViewSocHealth ? (
                     <QuickAction to="/dashboard/soc-health" label="System health" description="ML pipeline and monitoring." />
-                  ) : null}
-                  {hasPermission("view_models") ? (
-                    <QuickAction to="/dashboard/ml-confidence" label="ML operations" description="Model registry and confidence." />
                   ) : null}
                   <QuickAction to="/dashboard/settings" label="Platform settings" description="Operational configuration." />
                 </div>
@@ -540,12 +494,13 @@ export function DashboardPage() {
           </>
         ) : role === "analyst" ? (
           <>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
               <StatCard label="Active alerts" value={alerts.length} accent="text-rose-200" />
               <StatCard label="High-risk detections" value={highAlerts} accent="text-amber-200" />
               <StatCard label="Open incidents" value={summary?.incidents_open ?? 0} />
-              {/* Flow records (24h): COUNT of telemetry rows in last 24h — not packet count */}
-              <StatCard label="Flow records (24h)" value={flowCount24h.toLocaleString()} hint="Telemetry records" />
+              <StatCard label="Flow Records (24h)" value={flowCount24h.toLocaleString()} tooltip="Number of telemetry flow records ingested." />
+              <StatCard label="Network Packets (24h)" value={(packets?.packet_count_total ?? packets?.today_total ?? 0).toLocaleString()} tooltip="Total packets reported across all flow records." />
+              <StatCard label="Avg MTTR" value={mttr?.average_mttr_minutes ? `${mttr.average_mttr_minutes}m` : "—"} />
             </div>
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.4fr]">
@@ -554,9 +509,8 @@ export function DashboardPage() {
                 <p className="mt-1 text-sm text-muted">SOC workflows and investigation tools.</p>
                 <div className="mt-4 grid gap-2">
                   <QuickAction to="/dashboard/alerts" label="Investigate alerts" description="Review and triage." />
-                  <QuickAction to="/dashboard/active-threats" label="Active threats" description="Critical/high activity." />
+                  <QuickAction to="/dashboard/alerts?view=threats" label="Active threats" description="Critical/high activity." />
                   <QuickAction to="/dashboard/packets-analysed" label="Review telemetry" description="Traffic trends." />
-                  <QuickAction to="/dashboard/mttr" label="Incident MTTR" description="Operational response time." />
                 </div>
               </article>
 
@@ -604,13 +558,21 @@ export function DashboardPage() {
                 {packetsError ? <p className="mt-2 text-sm text-danger">{packetsError}</p> : null}
                 <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                   <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                    {/* packet_count_total = SUM of actual network packets (not flow count) */}
-                    <p className="text-xs text-muted">Network packets (24h)</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-xs text-muted">Network Packets (24h)</p>
+                      <span title="Total packets reported across all flow records." className="cursor-help text-muted transition hover:text-white">
+                        <Info size={12} />
+                      </span>
+                    </div>
                     <p className="mt-1 text-white">{(packets?.packet_count_total ?? packets?.today_total ?? 0).toLocaleString()}</p>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-background/40 p-3">
-                    {/* flow_count_total = COUNT of telemetry flow records */}
-                    <p className="text-xs text-muted">Flow records (24h)</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-xs text-muted">Flow Records (24h)</p>
+                      <span title="Number of telemetry flow records ingested." className="cursor-help text-muted transition hover:text-white">
+                        <Info size={12} />
+                      </span>
+                    </div>
                     <p className="mt-1 text-white">{(packets?.flow_count_total ?? 0).toLocaleString()}</p>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-background/40 p-3">
@@ -629,12 +591,12 @@ export function DashboardPage() {
           </>
         ) : role === "viewer" ? (
           <>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
               <StatCard label="Monitored devices" value={devices.length} />
               <StatCard label="Coverage" value={`${deviceCoverage}%`} hint={`${deviceActiveCount}/${devices.length} active`} />
               <StatCard label="Alerts (all time)" value={totalAlertsAllTime} accent="text-amber-200" />
-              {/* packet_count_total = SUM of actual network packets (24h) */}
-              <StatCard label="Network packets (24h)" value={(packets?.packet_count_total ?? packets?.today_total ?? 0).toLocaleString()} />
+              <StatCard label="Flow Records (24h)" value={flowCount24h.toLocaleString()} tooltip="Number of telemetry flow records ingested." />
+              <StatCard label="Network Packets (24h)" value={(packets?.packet_count_total ?? packets?.today_total ?? 0).toLocaleString()} tooltip="Total packets reported across all flow records." />
             </div>
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -644,8 +606,12 @@ export function DashboardPage() {
                 {devicesError ? <p className="mt-2 text-sm text-danger">{devicesError}</p> : null}
                 <div className="mt-3 space-y-2 text-sm">
                   <div className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
-                    <span className="text-white">Active monitoring</span>
-                    <span className="text-muted">{deviceActiveCount}</span>
+                    <span className="text-white">Online Devices</span>
+                    <span className="text-emerald-400">{deviceOnlineCount}</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
+                    <span className="text-white">Offline Devices</span>
+                    <span className="text-rose-400">{deviceOfflineCount}</span>
                   </div>
                   <div className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
                     <span className="text-white">Inventory total</span>
@@ -676,12 +642,12 @@ export function DashboardPage() {
           </>
         ) : (
           <>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
               <StatCard label="Registered assets" value={devices.length} />
               <StatCard label="Coverage" value={`${deviceCoverage}%`} hint={`${deviceActiveCount}/${devices.length} active`} />
               <StatCard label="Onboarding status" value={user?.onboardingStatus ?? "—"} />
-              {/* packet_count_total = network packets (SUM); flow_count_total = telemetry rows (COUNT) */}
-              <StatCard label="Network packets (24h)" value={(packets?.packet_count_total ?? packets?.today_total ?? 0).toLocaleString()} hint={`${(packets?.flow_count_total ?? 0).toLocaleString()} flow records`} />
+              <StatCard label="Flow Records (24h)" value={flowCount24h.toLocaleString()} tooltip="Number of telemetry flow records ingested." />
+              <StatCard label="Network Packets (24h)" value={(packets?.packet_count_total ?? packets?.today_total ?? 0).toLocaleString()} tooltip="Total packets reported across all flow records." />
             </div>
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.2fr]">
@@ -712,7 +678,9 @@ export function DashboardPage() {
                   {devices.slice(0, 5).map((device) => (
                     <div key={device.id} className="flex items-center justify-between rounded-xl border border-white/10 bg-background/40 px-3 py-2">
                       <span className="text-white">{device.name}</span>
-                      <span className="text-muted">{device.monitoring_status}</span>
+                      <span className={device.operational_state === "online" ? "text-emerald-400" : device.operational_state === "offline" ? "text-rose-400" : "text-muted"}>
+                        {device.operational_state.charAt(0).toUpperCase() + device.operational_state.slice(1)}
+                      </span>
                     </div>
                   ))}
                   {!devices.length ? <p className="text-sm text-muted">No devices registered yet.</p> : null}

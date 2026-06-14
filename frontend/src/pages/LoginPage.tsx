@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { forgotPassword, loginUser, requestEmailVerification, resetPassword, verifyEmail } from "../api/authApi";
@@ -22,6 +22,7 @@ export function LoginPage() {
 
   const [mode, setMode] = useState<"login" | "forgot" | "reset" | "verify">(initialMode);
   const [email, setEmail] = useState("");
+  const [emailTouched, setEmailTouched] = useState(false);
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -30,17 +31,42 @@ export function LoginPage() {
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [showResendVerification, setShowResendVerification] = useState(false);
 
+  /** Standard RFC-5322-inspired email regex for client-side format validation. */
+  const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  const isEmailValid = useCallback(
+    (value: string) => EMAIL_REGEX.test(value.trim()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
+
   useEffect(() => {
     setResetToken(tokenFromLink);
   }, [tokenFromLink]);
   const [authInfo, setAuthInfo] = useState("");
 
   const errors = useMemo(() => {
+    let emailError = "";
+    if (mode === "login") {
+      // Only show the error once the user has started typing
+      if (emailTouched) {
+        if (!email.trim()) {
+          emailError = "Email address is required.";
+        } else if (!isEmailValid(email)) {
+          emailError = "Please enter a valid email address (e.g. you@company.com).";
+        }
+      }
+    } else {
+      // Forgot-password mode keeps the old minimal check
+      if (email && email.trim().length < 3) {
+        emailError = "Please enter your email or username.";
+      }
+    }
     return {
-      email: email && email.trim().length < 3 ? "Please enter your email or username." : "",
+      email: emailError,
       password: password && password.length < 3 ? "Password must be at least 3 characters." : ""
     };
-  }, [email, password]);
+  }, [email, emailTouched, isEmailValid, mode, password]);
 
   const pendingApprovalBanner = useMemo(() => {
     const st = location.state as { pendingAdminApproval?: boolean } | null | undefined;
@@ -81,7 +107,10 @@ export function LoginPage() {
     event.preventDefault();
     setSubmitError("");
 
-    if (errors.email || errors.password || !email || !password) {
+    // Mark email as touched so all errors become visible on submit attempt
+    setEmailTouched(true);
+
+    if (!email.trim() || !isEmailValid(email) || errors.password || !password) {
       setSubmitError("Please fix validation errors before continuing.");
       return;
     }
@@ -222,10 +251,14 @@ export function LoginPage() {
             ) : null}
             <InputField
               id="email"
-              label="Email or username"
+              label="Email address"
+              type="email"
               placeholder="you@company.com"
               value={email}
-              onChange={setEmail}
+              onChange={(value) => {
+                setEmail(value);
+                if (!emailTouched) setEmailTouched(true);
+              }}
               error={errors.email}
             />
 
@@ -246,7 +279,13 @@ export function LoginPage() {
                 Resend verification email
               </Button>
             ) : (
-              <Button type="submit" loading={isSubmitting} className="w-full" size="lg">
+              <Button
+                type="submit"
+                loading={isSubmitting}
+                className="w-full"
+                size="lg"
+                disabled={isSubmitting || !email.trim() || !isEmailValid(email)}
+              >
                 Login
               </Button>
             )}

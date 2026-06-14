@@ -253,7 +253,9 @@ export function OtTrafficSourceModal({
                       onChange={(e) => setForm((p) => ({ ...p, customerId: e.target.value ? Number(e.target.value) : undefined }))}
                     >
                       <option value="">Select a customer...</option>
-                      {assignedCustomers.map((c) => (
+                      {assignedCustomers
+                        .filter((c) => c.role === "customer")
+                        .map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.company_name || c.username}
                         </option>
@@ -633,7 +635,7 @@ export function OtTrafficSourceModal({
                       </div>
                     </div>
 
-                    {topologyDevices.length > 0 ? (
+                    {existingDevices.length > 0 ? (
                       <div className="space-y-3 rounded-2xl border border-white/10 bg-[#0c152d]/35 p-4">
                         <SectionHeader icon={Radar} title="Topology" subtitle="Optional relationships (visible when inventory exists)." />
                         <div className="grid gap-2">
@@ -646,7 +648,7 @@ export function OtTrafficSourceModal({
                               onChange={(e) => setForm((p) => ({ ...p, connectedToDeviceId: e.target.value }))}
                             >
                               <option value="">None</option>
-                              {topologyDevices.map((device) => (
+                              {existingDevices.map((device) => (
                                 <option key={device.id} value={String(device.id)}>
                                   {device.name} {device.ip_address ? `(${device.ip_address})` : ""}
                                 </option>
@@ -662,7 +664,7 @@ export function OtTrafficSourceModal({
                               onChange={(e) => setForm((p) => ({ ...p, parentDeviceId: e.target.value }))}
                             >
                               <option value="">None</option>
-                              {topologyDevices.map((device) => (
+                              {existingDevices.map((device) => (
                                 <option key={device.id} value={String(device.id)}>
                                   {device.name} {device.ip_address ? `(${device.ip_address})` : ""}
                                 </option>
@@ -678,7 +680,7 @@ export function OtTrafficSourceModal({
                               onChange={(e) => setForm((p) => ({ ...p, networkPeerId: e.target.value }))}
                             >
                               <option value="">None</option>
-                              {topologyDevices.map((device) => (
+                              {existingDevices.map((device) => (
                                 <option key={device.id} value={String(device.id)}>
                                   {device.name} {device.ip_address ? `(${device.ip_address})` : ""}
                                 </option>
